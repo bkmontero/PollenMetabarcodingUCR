@@ -1,0 +1,266 @@
+---
+title: 'Compare assignment across databases'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(MicEco)
+library(fantaxtic)
+library(ggtext)
+library(ggh4x)
+library(png)
+library(cowplot)
+library(grid)
+
+#rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+## WORKING DIRECTORIES
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+
+```
+
+## LOAD DATA
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+local <- read.csv(paste0(dataDir, "/assignment_all_NCBI_local.csv"))
+local$ncbi_local <- paste0("ncbi_local")
+
+ncbi <- read.csv(paste0(dataDir, "/assignment_all_NCBI.csv"))
+ncbi$ncbi_local <- paste0("ncbi")
+
+data <- rbind(local, ncbi)
+
+
+data <- data %>% separate_wider_delim(cols = database, delim = "_", names = c("DB", "Derep", "GeoRestricted", "PrimerTrimmed"), cols_remove = FALSE) 
+
+data$taxlevelf = factor(data$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+data$db_label <- paste(data$Derep, data$PrimerTrimmed, sep = "_")
+table(data$db_label)
+
+str(data)
+table(data$database, data$taxlevelf)
+
+```
+
+### PLOT
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+
+db_theme <- theme_set(theme_bw(base_size = 11)) + theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(),  axis.line =element_line(colour = "black"), axis.text.x = element_text(angle = 90, vjust = 1, hjust=1, colour = "black", size = 14), axis.text.y = element_text(size = 14), axis.title = element_text(size = 15), strip.text = element_text(colour = 'black', face = "bold", size = 12), strip.background = element_rect(colour="black", fill="white"))
+
+(p_1 <- data %>% filter(taxlevel == "Order" & ncbi_local == "ncbi_local") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB1", "DB2", "DB3", "DB4", "DB5", "DB6", "DB7", "DB8")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("Order") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_2 <- data %>% filter(taxlevel == "Order" & ncbi_local == "ncbi") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB9", "DB10", "DB11", "DB12", "DB13", "DB14", "DB15", "DB16")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_3 <- data %>% filter(taxlevel == "Family" & ncbi_local == "ncbi_local") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB1", "DB2", "DB3", "DB4", "DB5", "DB6", "DB7", "DB8")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("Family") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_4 <- data %>% filter(taxlevel == "Family" & ncbi_local == "ncbi") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB9", "DB10", "DB11", "DB12", "DB13", "DB14", "DB15", "DB16")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_5 <- data %>% filter(taxlevel == "Genus" & ncbi_local == "ncbi_local") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB1", "DB2", "DB3", "DB4", "DB5", "DB6", "DB7", "DB8")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("Genus") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_6 <- data %>% filter(taxlevel == "Genus" & ncbi_local == "ncbi") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB9", "DB10", "DB11", "DB12", "DB13", "DB14", "DB15", "DB16")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = NULL) +
+				xlab("") + ylab("") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+
+(p_7 <- data %>% filter(taxlevel == "Species" & ncbi_local == "ncbi_local") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB1", "DB2", "DB3", "DB4", "DB5", "DB6", "DB7", "DB8")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = c("NoDerep_NotPrimerTrimmed", "Derep_NotPrimerTrimmed", "NoDerep_NotPrimerTrimmed", "Derep_NotPrimerTrimmed", "NoDerep_PrimerTrimmed", "Derep_PrimerTrimmed", "NoDerep_PrimerTrimmed", "Derep_PrimerTrimmed")) +
+				xlab("") + ylab("Species") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+(p_8 <- data %>% filter(taxlevel == "Species" & ncbi_local == "ncbi") %>% 
+				ggplot(aes(y = fractionReadsAssigned, 
+					x = factor(DB, 
+						levels = c("DB9", "DB10", "DB11", "DB12", "DB13", "DB14", "DB15", "DB16")))) +  
+				geom_boxplot(color='black', outlier.shape=NA) + 
+				geom_point(size = 1, color = "grey50") + 
+				stat_summary(fun = mean, geom="point", shape=22, size = 2.5, color="grey30", fill="red") +
+				scale_x_discrete(labels = c("NoDerep_NotPrimerTrimmed", "Derep_NotPrimerTrimmed", "NoDerep_NotPrimerTrimmed", "Derep_NotPrimerTrimmed", "NoDerep_PrimerTrimmed", "Derep_PrimerTrimmed", "NoDerep_PrimerTrimmed", "Derep_PrimerTrimmed")) +
+				xlab("") + ylab("") + 
+				facet_grid(.~ factor(GeoRestricted, levels = c("NotGeoRestricted", "GeoRestricted"), labels = c("No Geographic Restriction", "Geographic Restriction")), scales = "free_x", space = "free_x") +
+				db_theme )
+
+
+png(paste0(outputDir, "/Figures/TaxAssignment.png"), width = 2600, height = 3200, res = 200) 
+
+grid.newpage()
+pushViewport(viewport(layout  =  grid.layout(50, 12)))
+vplayout <- function(x, y) viewport(layout.pos.row  =  x, layout.pos.col  =  y)
+
+print(p_1 + ggtitle("a.") + theme(plot.title = element_text(size = 20, hjust = -0.06, vjust = 1.0, face = "bold",family="Helvetica")), vp = vplayout(1:11, 1:6))
+
+print(p_2 + ggtitle("b.") + theme(plot.title = element_text(size = 20, hjust = -0.06, vjust = 1.0, face = "bold",family="Helvetica")), vp = vplayout(1:11, 7:12))
+
+
+# Get the ggplot grob
+p_3_gt <- ggplotGrob(p_3)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_3_gt$layout$name)
+top <- unique(p_3_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_3_gt = p_3_gt[-(top-1), ]
+p_3_gt$vp = viewport(layout.pos.row = 13:21, layout.pos.col = 1:6)
+grid.draw(p_3_gt)
+
+
+# Get the ggplot grob
+p_4_gt <- ggplotGrob(p_4)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_4_gt$layout$name)
+top <- unique(p_4_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_4_gt = p_4_gt[-(top-1), ]
+p_4_gt$vp = viewport(layout.pos.row = 13:21, layout.pos.col = 7:12)
+grid.draw(p_4_gt)
+
+
+# Get the ggplot grob
+p_5_gt <- ggplotGrob(p_5)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_5_gt$layout$name)
+top <- unique(p_5_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_5_gt = p_5_gt[-(top-1), ]
+p_5_gt$vp = viewport(layout.pos.row = 23:31, layout.pos.col = 1:6)
+grid.draw(p_5_gt)
+
+
+# Get the ggplot grob
+p_6_gt <- ggplotGrob(p_6)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_6_gt$layout$name)
+top <- unique(p_6_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_6_gt = p_6_gt[-(top-1), ]
+p_6_gt$vp = viewport(layout.pos.row = 23:31, layout.pos.col = 7:12)
+grid.draw(p_6_gt)
+
+
+# Get the ggplot grob
+p_7_gt <- ggplotGrob(p_7)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_7_gt$layout$name)
+top <- unique(p_7_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_7_gt = p_7_gt[-(top-1), ]
+p_7_gt$vp = viewport(layout.pos.row = 33:50, layout.pos.col = 1:6)
+grid.draw(p_7_gt)
+
+
+# Get the ggplot grob
+p_8_gt <- ggplotGrob(p_8)
+
+# Locate the tops of the plot panels
+panels <- grep("panel", p_8_gt$layout$name)
+top <- unique(p_8_gt$layout$t[panels])
+
+# Remove the rows immediately above the plot panel
+p_8_gt = p_8_gt[-(top-1), ]
+p_8_gt$vp = viewport(layout.pos.row = 33:50, layout.pos.col = 7:12)
+grid.draw(p_8_gt)
+
+dev.off()
+
+```
+
+

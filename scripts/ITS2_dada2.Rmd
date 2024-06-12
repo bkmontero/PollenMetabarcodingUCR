@@ -1,0 +1,386 @@
+---
+title: 'ITS2 metabarcoding dada2 workflow'
+author: "B. Karina Montero"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+B. Karina Montero
+Modified from: https://benjjneb.github.io/dada2/ITS_workflow.html
+
+
+## LOAD LIBRARIES
+
+
+```{r loadLibraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+rm(list = ls())
+
+library(devtools)
+library(dada2); packageVersion("dada2")
+library(ShortRead)
+library(ggplot2)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(stringr)
+library(forcats)
+
+```
+
+
+
+## WORKING DIRECTORIES
+
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+```
+
+## I. LOAD & CHECK DATA
+
+### Directory containing the fastq files
+
+```{r fastqFiles, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_files <- sort(list.files(fastaDir, full.names = TRUE))
+head(list.files(fastaDir))
+
+```
+
+### Inspect read quality profiles
+
+```{r plotQuality, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+some_files <- sample(1:328, 16, replace = FALSE)
+plotQualityProfile(ITS2_files[c(some_files)])
+
+```
+
+## II. REMOVE PRIMERS
+
+Set patterns to discriminate forward and reverse read files
+
+```{r checkPrimers, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+file_pattern <- c("F" = "_R1_001.fastq", "R" = "_R2_001.fastq")
+fas_Fs_raw <- sort(list.files(fastaDir, pattern = file_pattern["F"], full.names = TRUE))
+fas_Rs_raw <- sort(list.files(fastaDir, pattern = file_pattern["R"], full.names = TRUE))
+
+```
+
+Primer sequences
+
+For pollen library preparation, a fragment of the ITS2 gene of around 450 bp was amplified using the following primers (Cheng et al 2016 MolEcolRes):
+
+```{r primers, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+FWD <- "YGACTCTCGGCAACGGATA"  
+REV <-  "CCGCTTAKTGATATGCTTAAA"  
+
+```
+
+Verify the presence and orientation of these primers in the data.
+
+```{r allOrients, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+allOrients <- function(primer) {
+    # Create all orientations of the input sequence
+    require(Biostrings)
+    dna <- DNAString(primer)  # The Biostrings works w/ DNAString objects rather than character vectors
+    orients <- c(Forward = dna, Complement = complement(dna), Reverse = reverse(dna), 
+        RevComp = reverseComplement(dna))
+    return(sapply(orients, toString))  # Convert back to character vector
+}
+
+FWD_orients <- allOrients(FWD)
+REV_orients <- allOrients(REV)
+
+#The presence of ambiguous bases (Ns) in the sequencing reads makes accurate mapping of short primer sequences difficult. Next we are going to “pre-filter” the sequences just to remove those with Ns, but perform no other filtering.
+
+# Put N-filterd files in filtN/ subdirectory
+fas_Fs_filtN <- file.path(fastaDir, "filtN", basename(fas_Fs_raw)) 
+fas_Rs_filtN <- file.path(fastaDir, "filtN", basename(fas_Rs_raw))
+
+filterAndTrim(fas_Fs_raw, fas_Fs_filtN, fas_Rs_raw, fas_Rs_filtN, maxN = 0, multithread = 6)
+
+## Ran out of memory when using multithread = TRUE
+## solution: specify number of cores (bellow max)
+
+```
+
+Count the number of times the primers appear in the forward and reverse read, while considering all possible primer orientations.
+
+```{r primerCount, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+primerHits <- function(primer, fn) {
+    # Counts number of reads in which the primer is found
+    nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+    return(sum(nhits > 0))
+}
+
+primer_count <- rbind(FWD.ForwardReads_ITS = sapply(FWD_orients, primerHits, fn = fas_Fs_filtN[[1]]), 
+    FWD.ReverseReads_ITS = sapply(FWD_orients, primerHits, fn = fas_Rs_filtN[[1]]), 
+    REV.ForwardReads_ITS = sapply(REV_orients, primerHits, fn = fas_Fs_filtN[[1]]), 
+    REV.ReverseReads_ITS = sapply(REV_orients, primerHits, fn = fas_Rs_filtN[[1]]))
+primer_count
+
+```
+
+The FWD primer is mainly found in its forward orientation of the reverse reads (R2) and of the reverse orientation of the forward reads (R1). 
+
+```{r removePrimers, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+FWD_RC <- dada2:::rc(FWD)
+REV_RC <- dada2:::rc(REV)
+
+path_cut <- file.path(fastaDir, "cutadapt")
+if(!dir.exists(path_cut)) dir.create(path_cut)
+
+fas_Fs_cut <- file.path(path_cut, basename(fas_Fs_filtN))
+fas_Rs_cut <- file.path(path_cut, basename(fas_Rs_filtN))
+
+# Trim REV and the reverse-complement of FWD off of R1 (forward reads)
+R1_flags <- paste(paste("-g", REV, collapse = " "), paste("-a", FWD_RC, collapse = " "))
+
+# Trim FWD and the reverse-complement of REV off of R2 (forward reads)
+R2_flags <- paste(paste("-G", FWD, collapse = " "), paste("-A", REV_RC, collapse = " "))
+
+cutadapt <- "/home/kari/miniconda3/envs/cutadaptenv/bin/cutadapt" # Path to the executable
+
+for(i in seq_along(fas_Fs_filtN)) {
+  #cat("Processing", "-----------", i, "/", length(fas_Fs_filtN), "-----------\n")
+  system2(cutadapt, args = c(R1_flags, R2_flags,
+                             "-m 50",
+                             "--cores 8", # Use 0 to auto-detect.
+                             "-n 2", # required to remove FWD and REV from read
+                             "-o", fas_Fs_cut[i], "-p", fas_Rs_cut[i],
+                             fas_Fs_filtN[i], fas_Rs_filtN[i]))
+}
+
+primer_count <- rbind(FWD.ForwardReads_ITS = sapply(FWD_orients, primerHits, fn = fas_Fs_cut[[1]]), 
+    FWD.ReverseReads_ITS = sapply(FWD_orients, primerHits, fn = fas_Rs_cut[[1]]), 
+    REV.ForwardReads_ITS = sapply(REV_orients, primerHits, fn = fas_Fs_cut[[1]]), 
+    REV.ReverseReads_ITS = sapply(REV_orients, primerHits, fn = fas_Rs_cut[[1]]))
+primer_count
+
+```
+
+Summary report to keep track of primer trimming step
+
+```{r trackRaw, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+directories <- c(fastaDir, path_cut)
+d <- directories[1]
+filenames <- list.files(directories)
+f <- filenames[1]
+reads_report <- list()
+widths <- list()
+j <- 1
+out <- data.frame()
+
+for (d in directories) {
+    get_path <- d
+    name_path <- sub(".*/","",d)
+    filenames <- list.files(get_path, pattern =".fastq")
+        for (f in filenames) {
+                infile <- readFastq(get_path, f)
+                f1 <- sub("_001.*","",f)
+                file_biostring <- sread(infile)
+                reads_report[[j]] <- data.frame(sampleID = f1, n_reads = length(file_biostring@ranges@width), directory = name_path )       
+                j = j+1      
+            out <- data.frame(Reduce(rbind, reads_report))
+        }
+}
+
+out_2 <- out
+
+
+# Wide to long format
+
+reads_df <- out %>% pivot_wider(
+                    names_from = directory,
+                    values_from = n_reads) %>%
+                dplyr::rename(raw = "02_fastq_files") %>%
+                as.data.frame
+reads_df$sampleID <-  sub("\\_.*","",reads_df$sampleID)
+head(reads_df)
+
+# save file
+write.csv(reads_df, paste0(outputDir, "/01_dada2/ITS2_track_cutadapt.csv"))
+
+```
+
+
+## III. FILTER AND TRIM
+
+
+```{r filterPath, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+path_cut <- paste0(fastaDir, "/cutadapt") 
+
+fas_Fs_cut <- sort(list.files(path_cut, pattern = file_pattern["F"], full.names = TRUE))
+fas_Rs_cut <- sort(list.files(path_cut, pattern = file_pattern["R"], full.names = TRUE))
+
+sample_names <- sapply(strsplit(basename(fas_Fs_cut), "_"), function(x) x[1])
+
+ITS2_cut <- sort(list.files(path_cut, full.names = TRUE))
+
+```
+
+Inspect read quality profiles
+
+```{r qualityPrimerRemove, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+some_files <- sample(1:374, 16, replace = FALSE)
+plotQualityProfile(ITS2_cut[c(some_files)])
+
+fas_Fs_filtered <- file.path(fastaDir, "filtered", basename(fas_Fs_cut))
+fas_Rs_filtered <- file.path(fastaDir, "filtered", basename(fas_Rs_cut))
+all.equal(basename(fas_Fs_raw), basename(fas_Fs_filtered))
+
+names(fas_Fs_filtered) <- sample_names
+names(fas_Rs_filtered) <- sample_names
+
+```
+
+Standard filtering paraments: maxN=0 (DADA2 requires sequences contain no Ns), truncQ = 2, rm.phix = TRUE and maxEE=2. The maxEE parameter sets the maximum number of “expected errors” allowed in a read, which is a better filter than simply averaging quality scores.
+
+```{r filterAndTrim, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+filter_trim <- filterAndTrim(fas_Fs_cut, fas_Fs_filtered, fas_Rs_cut, fas_Rs_filtered,
+                       minLen = 50,
+                       maxLen = 600, 
+                       maxN = 0, maxEE = c(2, 2), truncQ = 2,
+                       rm.phix = TRUE, multithread = 6, verbose = TRUE)
+head(filter_trim)
+
+```
+
+## IV. DADA2
+
+Learn error rates
+```{r learnErrors, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+error_F <- learnErrors(fas_Fs_filtered, multithread = TRUE, randomize = TRUE)
+plotErrors(error_F, nominalQ=TRUE)
+
+error_R <- learnErrors(fas_Rs_filtered, multithread = TRUE, randomize = TRUE)
+plotErrors(error_R, nominalQ=TRUE)
+
+```
+
+
+### DEREPLICATION, SAMPLE INFERENCE & MERGE PAIRED READS
+
+```{r derepAndDada, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+merged_list <- vector("list", length(sample_names))
+names(merged_list) <- sample_names
+
+for(i in sample_names){
+  cat("Processing -------", which(sample_names == i), "/", length(sample_names), "-------", i, "\n")
+  derep_Fs <- derepFastq(fas_Fs_filtered[[i]], verbose = TRUE)
+  derep_Rs <- derepFastq(fas_Rs_filtered[[i]], verbose = TRUE)
+  dds_Fs <- dada(derep_Fs, err = error_F, multithread = TRUE, verbose = TRUE)
+  dds_Rs <- dada(derep_Rs, err = error_R, multithread = TRUE, verbose = TRUE)
+  merged_list[[i]] <- mergePairs(dds_Fs, derep_Fs, dds_Rs, derep_Rs, verbose = TRUE)
+}
+
+```
+
+### BUILD SEQUENCE TABLE
+
+```{r seqTab, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+seqtab <- makeSequenceTable(merged_list)
+dim(seqtab)
+
+seqtab_df <- data.frame(table(nchar(getSequences(seqtab))))
+colnames(seqtab_df) <- c("Length", "Freq")
+write.csv(seqtab_df, paste0(outputDir, "/01_dada2/seqtab_length_distrib.csv"))
+
+# Plot sequence length distribution 
+seqtab_df <- read.csv(paste0(outputDir, "/01_dada2/seqtab_length_distrib.csv"))
+str(seqtab_df)
+
+freq_seqtab_df <- as.vector(rep(seqtab_df$Length, seqtab_df$Freq))
+hist(freq_seqtab_df, breaks = 50, xlab ="Length", main = "Sequence length distribution \n (n_samples= 187, n_seqs = 8086)" )
+```
+
+### REMOVE CHIMERAS
+
+```{r removeChim, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+seqtab_nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = TRUE, verbose = TRUE)
+
+dim(seqtab_nochim)
+
+nochim_df <- data.frame(table(nchar(getSequences(seqtab_nochim))))
+colnames(nochim_df) <- c("Length", "Freq")
+
+write.csv(nochim_df, paste0(outputDir, "/01_dada2/nochim_length_distrib.csv"))
+
+# Plot sequence length distribution chimera filtered data
+nochim_df <- read.csv(paste0(outputDir, "/01_dada2/nochim_length_distrib.csv"))
+freq_nochim_df <- as.vector(rep(nochim_df$Length, nochim_df$Freq))
+hist(freq_nochim_df, breaks = 50, xlab ="Length", main = "Non-chimeric sequence length distribution \n (n_samples= 187, n_seqs = 3306)" )
+```
+
+### TRACK READS THROUGH THE PIPELINE
+
+```{r trackReads, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+track <- cbind(filter_trim, rowSums(seqtab), rowSums(seqtab_nochim))
+colnames(track) <- c("cutadapt", "filtered", "merged", "nonchim")
+rownames(track) <- sample_names
+track <- tibble::rownames_to_column(as.data.frame(track), "sampleID")
+head(track)
+
+# add column with raw read counts 
+track_raw <- read.csv(paste0(outputDir, "/01_dada2/ITS2_track_cutadapt.csv"))
+track_raw <- track_raw %>% select("sampleID", "raw")
+
+# join datasets to update the read count 
+track_update <- left_join(track_raw, track, by = "sampleID")
+track_update$run <- ifelse(grepl("220822", track_update$sampleID), "segundo-envio", ifelse(grepl("04042023", track_update$sampleID), "tercer-envio", ifelse(grepl("ENES2022A", track_update$sampleID), "primer-envio", "CIBCM")))
+head(track_update)
+
+write.csv(track_update, paste0(outputDir, "/01_dada2/ITS2_track_reads.csv"), row.names = FALSE)
+
+```
+
+Plot track reads across sequencing runs 
+```{r plotTrack, message=FALSE, warning=FALSE, tidy=TRUE, fig.width=10, fig.height=5}
+
+
+(plot_track <- track_update %>% 
+                    pivot_longer(., cols = c(raw, cutadapt, filtered, merged, nonchim), names_to = "Step", values_to = "Read_count") %>%
+                    dplyr::mutate(Step = fct_relevel(Step, c("raw", "cutadapt", "filtered", "merged", "nonchim"))) %>%
+                    ggplot(aes( x = Step, y = Read_count, fill = run)) +
+                    geom_boxplot() + 
+                    scale_fill_manual(values = c("grey50", "#230066", "#999911", "cornflowerblue")) +
+                    theme_bw(base_size = 18)
+                    )
+
+```
+
+
+### Export files for use in QIIME2
+
+```{r saveFileQiime, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+write.table(t(seqtab_nochim), paste0(outputDir, "/01_dada2/ITS2_QIIME2seqtab.txt"), sep="\t", row.names=TRUE, col.names=NA, quote=FALSE)
+uniquesToFasta(seqtab_nochim, fout=paste0(outputDir, "/01_dada2/ITS2-rep-seqs.fna"), ids=colnames(seqtab_nochim))
+
+```
+
+## Session Info
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+library(details)
+
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE
+  )
+
+```

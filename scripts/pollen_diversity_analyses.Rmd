@@ -1,0 +1,1146 @@
+---
+title: 'ITS2 alpha preliminary diversity analysis'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(MicEco)
+library(fantaxtic)
+library(ggtext)
+library(ggh4x)
+library(png)
+library(cowplot)
+library(grid)
+library(gtable)
+
+
+#phyloseq section
+library(phyloseq)
+library(Biostrings)
+library(microbiome)
+library(microViz)
+
+# diversity 
+library(hilldiv)
+library(iNEXT)
+
+#rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+## WORKING DIRECTORIES
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+source("/home/kari/Dropbox/REPO/PollenMetabarcoding/pollen_graphics_param.R")
+
+```
+
+
+## METADATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+metadata <- read.table(paste0(dataDir, "/ps_ITS2_DB4_metadata.txt"), header = TRUE, sep = "\t")
+
+```
+
+### GRAPHICAL PARAMETERS
+```{r graphParams, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ord_theme <- theme_set(theme_bw(base_size = 13)) + theme( panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_rect(fill = NA, colour = "black"),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+
+crop_order <- c("Malus", "Persea","Prunus","Rubus")
+
+crop_col <- c("#D55E00", "#009E73", "#F0E442", "#0072B2")
+
+
+crop_color <- scale_color_manual(name = "Fruit crop",
+                                   values = crop_col,
+                                   limits = crop_order,
+                                   )
+crop_fill <- scale_fill_manual(name = "Fruit crop",
+                                   values = crop_col,
+                                   limits = crop_order
+                                   #guide = "none"
+                                   )
+
+bichos_colors <- c("#ffc087","#1c1e5e", "#914b00", "#6aa7ff", "#ff69c5")
+
+bichos_order <- c("Apis", "Bombus", "Other", "Non-Syrphidae", "Syrphidae")
+
+names(bichos_colors) <- bichos_order
+
+bichos_fill <- scale_fill_manual(name = "Insect visitors",
+                                   values = bichos_colors,
+                                   limits = bichos_order,
+                                    labels = c("Apis", "Bombus", "Other", "Non- \n Syrphidae", "Syrphidae")
+                                   #guide = "none"
+                                   )
+
+bichos_color <- scale_color_manual(name = "Insect visitors",
+                                   values = bichos_colors,
+                                   limits = bichos_order,
+                                   labels = c("Apis", "Bombus", "Other", "Non- \n Syrphidae", "Syrphidae")
+
+                                   ) 
+```
+
+
+## LOAD AND CLEAN ITS2 DATA
+
+Load ITS2 datasets using NCBI (Dubois) database taxonomy assignment
+
+```{r phyloseq, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ps_pollen <- readRDS(paste0(dataDir, "/ps_ITS2_DB4_derep_geoRestricted.rds"))
+
+ps_pollen_filt <- ps_pollen %>%
+    subset_taxa(!is.na(Genus)) %>% subset_samples(!is.na(Fruitcrop) & Rep_ID == 1 & !is.na(Order) & Lab_code_rep != "CA17")
+ps_pollen_filt
+
+# remove taxa with zero counts
+ps_pollen_filt <- prune_taxa(taxa_sums(ps_pollen_filt) >0, ps_pollen_filt)
+
+#table(sample_data(ps_pollen_filt)$Month, sample_data(ps_pollen_filt)$Bichos_group, sample_data(ps_pollen_filt)$Fruitcrop)
+
+prevalenceDF <- data.frame(Prevalence = colSums(otu_table(ps_pollen_filt) > 0 ), Proportion = colSums(otu_table(ps_pollen_filt) > 0 )/156 , TotalAbundance = colSums(otu_table(ps_pollen_filt)), tax_table(ps_pollen_filt))
+
+prevalenceDF <- prevalenceDF %>% filter(Prevalence != 0)
+nrow(prevalenceDF)
+
+idxAbundance = order(prevalenceDF$TotalAbundance, decreasing=T)
+idxPrevalence = order(prevalenceDF$Prevalence, decreasing=T)
+
+kable(prevalenceDF[idxAbundance, ][1:25, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+kable(prevalenceDF[idxPrevalence, ][1:25, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+# Most abundant ASVs
+
+top_50_abund <- as.data.frame(prevalenceDF[idxAbundance, ][1:50, ])
+top_50_prev <- as.data.frame(prevalenceDF[idxPrevalence, ][1:50, ])
+
+write.csv(prevalenceDF, paste0(outputDir, "/03_Exploration/ps_pollen_filt_DB4_prevalence.csv"))
+
+
+```
+
+
+Filter data 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, eval = FALSE}
+
+library(seqinr)
+library(data.table)
+
+# threshold of 0.0025 relative abundance in at least one sample (0.25 %)
+
+clean_tab <- fread(paste0(dataDir,'/ps_ITS2_DB4_asv_tab.txt'))
+setnames(clean_tab, "V1", "ASV")
+
+colnames(clean_tab)
+
+metadata <- read.csv(paste0(dataDir,'/ps_ITS2_DB4_metadata.txt'), sep ='\t')
+sampleids <- as.vector(metadata$Lab_code_rep)
+clean_tab <- clean_tab[, (sampleids) := lapply(.SD, function(x){x/sum(x)}), .SDcols = sampleids]
+clean_tab <- clean_tab[, (sampleids) := lapply(.SD, function(x){ifelse(x > 0.0025, 1, 0)}), .SDcols = sampleids]
+clean_tab_abund <- as.data.frame(clean_tab[rowSums(clean_tab[,..sampleids]) > 0, ])
+
+
+# Keep abundant ASVs in ps object
+
+keep_asvs <- clean_tab_abund$ASV
+ps_0025_filter <- prune_taxa(keep_asvs, ps_pollen)
+
+ps_0025_filter_Genus <- tax_glom(ps_0025_filter, "Genus")
+
+ps_0025_filter_Species <- tax_glom(ps_0025_filter, "Species")
+
+
+prevalenceDF_0025 <- data.frame(Prevalence = colSums(otu_table(ps_0025_filter_Species) > 0 ), Proportion = colSums(otu_table(ps_0025_filter_Species) > 0 )/156 , TotalAbundance = colSums(otu_table(ps_0025_filter_Species)), tax_table(ps_0025_filter_Species))
+
+prevalenceDF_0025 <- prevalenceDF_0025 %>% filter(Prevalence != 0)
+nrow(prevalenceDF_0025)
+
+idxAbundance = order(prevalenceDF_0025$TotalAbundance, decreasing=T)
+idxPrevalence = order(prevalenceDF_0025$Prevalence, decreasing=T)
+
+kable(prevalenceDF_0025[idxAbundance, ][1:25, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+kable(prevalenceDF_0025[idxPrevalence, ][1:50, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+# Most abundant ASVs
+
+top_50_abund <- as.data.frame(prevalenceDF_0025[idxAbundance, ][1:50, ])
+top_50_prev <- as.data.frame(prevalenceDF_0025[idxPrevalence, ][1:50, ])
+
+write.csv(prevalenceDF_0025, paste0(outputDir, "/03_Exploration/ps_0025_filt_Species_DB4_prevalence.csv"))
+
+
+#remove sample CA17 (contamination?) 
+ps_pollen_filt <- ps_0025_filter %>% subset_samples(Lab_code_rep != "CA17")
+ps_pollen_filt
+
+#saveRDS(ps_0025_filter, paste0(dataDir, "/ps.abun0025_", Sys.Date(), ".rds"))
+
+```
+
+Replace NA with the higher level taxonomic assignment 
+
+```{r replaceNA, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+tax <- data.frame(tax_table(ps_pollen_filt))
+head(tax)
+
+tax[is.na(tax)] <- "NA"
+
+for (i in 1:nrow(tax)){
+    if (tax[i,2] == "NA"){
+    kingdom <- paste("Kingdom_", tax[i,1], sep = "")
+    tax[i, 2:7] <- kingdom
+    } else if (tax[i,3] == "NA"){
+    phylum <- paste("Phylum_", tax[i,2], sep = "")
+    tax[i, 3:7] <- phylum
+    } else if (tax[i,4] == "NA"){
+    class <- paste("Class_", tax[i,3], sep = "")
+    tax[i, 4:7] <- class
+    } else if (tax[i,5] == "NA"){
+    order <- paste("Order_", tax[i,4], sep = "")
+    tax[i, 5:7] <- order
+    } else if (tax[i,6] == "NA"){
+    family <- paste("Family_", tax[i,5], sep = "")
+    tax[i, 6:7] <- family
+    } else if ((tax[i,7] == "NA" | tax[i,7] == "sp" | tax[i,7] == "sp." )){
+    tax$Species[i] <- paste("Genus_", tax[i,6], sep = "")
+} else if (tax[i,7] == "NA"){
+}
+}
+
+tax_table(ps_pollen_filt) <- as.matrix(tax)
+
+# double check tables
+prevalenceDF_check <- data.frame(Prevalence = colSums(otu_table(ps_pollen_filt) > 0 ), Proportion = colSums(otu_table(ps_pollen_filt) > 0 )/156 , TotalAbundance = colSums(otu_table(ps_pollen_filt)), tax_table(ps_pollen_filt))
+
+prevalenceDF_check <- prevalenceDF_check %>% filter(Prevalence != 0)
+nrow(prevalenceDF_check)
+#write.csv(prevalenceDF_check, paste0(outputDir, "/03_Exploration/ps_check_filt_DB4_prevalence.csv"))
+
+
+
+```
+
+Agglomerate taxa
+
+```{r taxGlom, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ps_pollen_filt_Genus <- tax_glom(ps_pollen_filt, "Genus")
+
+ps_pollen_filt_Species <- tax_glom(ps_pollen_filt, "Species")
+
+# triple check tables
+prevalenceDF_check_species <- data.frame(Prevalence = colSums(otu_table(ps_pollen_filt_Species) > 0 ), Proportion = colSums(otu_table(ps_pollen_filt_Species) > 0 )/156 , TotalAbundance = colSums(otu_table(ps_pollen_filt_Species)), tax_table(ps_pollen_filt_Species))
+
+prevalenceDF_check_species <- prevalenceDF_check_species %>% filter(Prevalence != 0)
+nrow(prevalenceDF_check_species)
+#write.csv(prevalenceDF_check_species, paste0(outputDir, "/03_Exploration/ps_check_filt_species_DB4_prevalence.csv"))
+
+```
+
+### Insect visitor data
+
+```{r insectData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+visitor_data <- ps_pollen_filt_Species %>% sample_data %>% data.frame
+
+tax_visitors <- visitor_data %>% select(Order, Family, Genus, Lowest_assignment)
+
+tax_visitors[is.na(tax_visitors)] <- "NA"
+
+```
+
+Replace NA with highest taxonomic assinment
+
+```{r cleanInsectTax, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+for (i in 1:nrow(tax_visitors)){
+    if (tax_visitors[i,2] == "NA"){
+    order <- paste("Order_", tax_visitors[i,1], sep = "")
+    tax_visitors[i, 2:4] <- order
+    } else if (tax_visitors[i,3] == "NA"){
+   family <- paste("Family_", tax_visitors[i,2], sep = "")
+    tax_visitors[i, 3:4] <- family
+    } else if ((tax_visitors[i,4] == "NA")){
+    tax_visitors$Lowest_assignment[i] <- paste("Genus_", tax_visitors[i,2], sep = "")
+} else if (tax_visitors[i,4] == "NA"){
+}
+}
+
+# merge with df
+visitor_data_subset <- visitor_data %>% select(-Order, -Family, -Subfamily, -Tribe, -Genus, -Species, -Morphospecies, -Lowest_assignment)
+
+
+visitor_data_subset <- merge(visitor_data_subset, tax_visitors, by = 0, all.x = FALSE) 
+rownames(visitor_data_subset)
+
+sampling_lowest <- visitor_data_subset %>% 
+          group_by(Fruitcrop) %>%
+          summarise(count_lowest = n_distinct(Lowest_assignment)) %>%
+          data.frame
+
+sampling_lowest
+
+visitor_data_subset <- sample_data(visitor_data_subset)
+sample_names(visitor_data_subset) <- sample_data(visitor_data_subset)$Row.names
+
+# replace sample data pollen object
+sample_data(ps_pollen_filt_Species) <- visitor_data_subset
+
+```
+
+## HILL DIVERSITY
+
+
+## HILL DIVERSITY ACROSS FRUITCROPS
+
+Prepare input data
+
+```{r richnessFruitcrops, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# hierarchy
+pollen_hier_crop <- ps_pollen_filt_Species %>%
+                sample_data %>% 
+                data.frame %>%
+                filter(!is.na(Fruitcrop)) %>%
+                select(Lab_code_rep, Fruitcrop, Lowest_assignment, Family, Bichos_group)  
+head(pollen_hier_crop)
+
+pollen_hier_crop$Fruitcrop_bichos <- paste(pollen_hier_crop$Fruitcrop, pollen_hier_crop$Bichos_group, sep = "_")
+
+table(pollen_hier_crop$Bichos_group, pollen_hier_crop$Fruitcrop)
+
+pollen_hier_crop$Bichos_group <- ifelse(pollen_hier_crop$Bichos_group == "Lasioglossum"| pollen_hier_crop$Bichos_group == "Astylus" | pollen_hier_crop$Bichos_group == "Astylus" | pollen_hier_crop$Bichos_group == "Partamona",  "Other", pollen_hier_crop$Bichos_group)
+
+# ASV incidence_raw 
+absencePresence_ps <- ps_pollen_filt_Species %>% microViz::tax_transform("binary") 
+
+absencePresence_df <- absencePresence_ps %>% otu_table %>% data.frame
+
+colnames(absencePresence_df) <- paste(as.data.frame(tax_table(ps_pollen_filt_Species))$Genus, as.data.frame(tax_table(ps_pollen_filt_Species))$Species, sep = "_")
+
+colnames(absencePresence_df) <- str_replace(colnames(absencePresence_df), pattern = ".?Genus+.*", replacement = "_sp.")
+
+absencePresence_df <- left_join(rownames_to_column(absencePresence_df), pollen_hier_crop, by = c("rowname" = "Lab_code_rep"))
+
+colnames(absencePresence_df)[1] <- "Lab_code_rep"
+absencePresence_df$Lab_code_rep
+
+absencePresence_df_long <-  absencePresence_df %>%
+                  #select(-Lab_code_rep) %>%
+                  pivot_longer(
+                    !c(Lab_code_rep, Fruitcrop, Lowest_assignment, Family, Bichos_group, Fruitcrop_bichos),
+                    names_to = "Genus_species", 
+                    values_to = "absencePresence") %>%
+                  group_by(Lab_code_rep, Fruitcrop,Genus_species) %>%
+                  summarise(absencePresence_data = max(absencePresence)) 
+
+head(data.frame(absencePresence_df_long), 10)
+table(absencePresence_df_long$Fruitcrop)
+
+#remotes::install_gitlab("hrbrmstr/hrbrthemes")
+
+summary_fruitcrops <- absencePresence_df_long %>% group_by(Lab_code_rep, Fruitcrop) %>% summarise(total = sum(absencePresence_data)) 
+
+
+summary_fruitcrops %>% group_by(Fruitcrop) %>% summarise(meanPlants = mean(total), min(total), max(total))
+
+
+(summary_fruitcrops_hist <- summary_fruitcrops %>% ggplot(aes(x=total)) + geom_histogram(fill= "#3690C0") + facet_grid(. ~ Fruitcrop, scales = "free",space="free") + theme_bw() + xlab("") + ylab("N samples")
+)
+
+
+# format Malus into a integer matrix
+incidence_malus <- absencePresence_df_long %>%
+          filter(Fruitcrop == "Malus domestica") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(-Fruitcrop, -Genus_species) %>%
+          data.frame
+
+
+incidence_malus <- as.matrix(apply(incidence_malus[,-1],2,as.integer))
+rownames(incidence_malus) <- incidence_malus[,1]
+
+# format Persea into a integer matrix
+incidence_persea <- absencePresence_df_long %>%
+          filter(Fruitcrop == "Persea americana") %>%  
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(-Fruitcrop, -Genus_species) %>%
+          data.frame
+
+incidence_persea <- as.matrix(apply(incidence_persea[,-1],2,as.integer))
+rownames(incidence_persea) <- incidence_persea[,1]
+
+# format Prunus into a integer matrix
+incidence_prunus <- absencePresence_df_long %>%
+          filter(Fruitcrop == "Prunus domestica") %>%  
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(-Fruitcrop, -Genus_species) %>%
+          data.frame
+
+incidence_prunus <- as.matrix(apply(incidence_prunus[,-1],2,as.integer))
+rownames(incidence_prunus) <- incidence_prunus[,1]
+
+# format Rubus into a integer matrix
+incidence_rubus <- absencePresence_df_long %>%
+          filter(Fruitcrop == "Rubus") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(-Fruitcrop, -Genus_species) %>%
+          data.frame
+
+
+incidence_rubus <- as.matrix(apply(incidence_rubus[,-1],2,as.integer))
+rownames(incidence_rubus) <- incidence_rubus[,1]
+
+# create a list 
+incidence_pollen <- list(Malus = incidence_malus, Persea = incidence_persea, Prunus = incidence_prunus, Rubus = incidence_rubus)
+str(incidence_pollen)
+
+```
+
+Run iNEXT on incidence data
+
+```{r inextCultivosIncid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#  The estimated asymptotes are calculated via the functions ChaoRichness() for q = 0, ChaoShannon() for q = 1 and ChaoSimpson() for q = 2; see Chao et al. (2014) for the formulas of all asymptotic estimators.
+
+inext_pollen <- iNEXT(incidence_pollen, q = c(0, 1, 2), datatype = "incidence_raw")
+
+inext_pollen$DataInfo
+
+coverage_incidence <- estimateD(incidence_pollen, q = c(0, 1, 2), datatype = "incidence_raw", base = "coverage", conf = 0.95, nboot = 100)
+
+#If the level argument is left default (NULL), the standardization is done to the lowest level (of size or coverage) among fruitcrops 
+
+
+```
+
+
+Completeness curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#Sample completeness curve (type=2) with confidence intervals (if se=TRUE): see Figs. 1b and 2b in Hsieh et al. (2016). This curve plots the sample coverage with respect to sample size for the same range described in (1).
+
+fruitcrop_compl_curve <- ggiNEXT(inext_pollen, type = 2)
+
+fruitcrop_compl_curve_p <- fruitcrop_compl_curve + 
+                    crop_color +
+                    crop_fill + 
+                    pca_theme + 
+                    annotate(geom = "text", x = 28, y= 0.91, 
+                        label = "Malus domestica (99%)", hjust = -.2) +
+                    annotate(geom = "text", x = 47, y= 0.92, 
+                        label = "Persea americana (94%)", hjust = -.2) +
+                    annotate(geom = "text", x = 12, y= 0.98, 
+                        label = "Prunus domestica (94%)", hjust = -.2) +
+                    annotate(geom = "text", x = 48, y= 1, 
+                        label = "Rubus sp. (98%)", hjust = -.2) +
+                    theme_set(theme_bw(base_size = 14)) + 
+                    theme(legend.position = "none", axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+fruitcrop_compl_curve_p 
+ 
+
+png(paste0(outputDir, "/Figures/pollen_fruitcrop_completeness_curve.png"), width = 2700, height = 1700, res = 250) 
+fruitcrop_compl_curve_p 
+dev.off()
+    
+```
+
+> Similar coverage for all crops (>90%).
+> 
+> 
+Diversity estimates: Coverage-based curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# Coverage-based R/E curve (type=3): see Figs. 1c and 2c in Hsieh et al. (2016). This curve plots the diversity estimates with confidence intervals (if se=TRUE) as a function of sample coverage up to the maximum coverage obtained from the maximum size described in (1)
+
+fruitcrop_coverage_curve <- ggiNEXT(inext_pollen, type = 3, facet.var = "Order.q")
+
+fruitcrop_coverage_curve_p <- fruitcrop_coverage_curve + 
+                    crop_color +
+                    crop_fill + 
+                    pca_theme + 
+                    theme_set(theme_bw(base_size = 14)) + 
+                    theme( axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+fruitcrop_coverage_curve_p
+
+png(paste0(outputDir, "/Figures/pollen_fruitcrop_RE_curve.png"), width = 3000, height = 1700, res = 250) 
+fruitcrop_coverage_curve_p 
+dev.off()
+
+```
+
+
+
+Within crops Hill numbers estimates (coverageD)
+
+```{r cultivosIncidenceEstim, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+coverage_incidence$ID <- paste("Incidence", coverage_incidence$Assemblage, coverage_incidence$Order.q, sep = "_")
+
+coverage_incidence_long <- coverage_incidence %>%
+            select(-Assemblage, -Order.q, -t, - Method, -SC) %>%
+            pivot_longer(!ID, 
+                  names_to = "iNEXT_est", 
+                  values_to = "estimate")
+
+coverage_fruitcrop <- coverage_incidence_long %>% separate_wider_delim(cols = ID, delim = "_", names = c("Data_type", "Fruitcrop", "Hill_number"))
+
+
+```
+
+PLot Incidence Data (coverage)
+
+```{r cultivosIncidCoveragePlots, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.show = "hide"}
+
+richness_coverage_p <- coverage_fruitcrop %>% 
+      filter(Hill_number == "0") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Fruitcrop, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+           geom_point(shape=21, size=4, fill="grey")+
+       xlab("") + ylab("Richness") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+shannon_coverage_p <- coverage_fruitcrop %>% 
+      filter(Hill_number == "1") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Fruitcrop, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+              geom_point(shape=21, size=4, fill="grey")+
+        xlab("") + ylab("Hill-Shannon") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+simpson_coverage_p <- coverage_fruitcrop %>% 
+      filter(Hill_number == "2") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Fruitcrop, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+              geom_point(shape=21, size=4, fill="grey")+
+        xlab("") + ylab("Hill-Simpson") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+alpha_pollen_fruitcrops_p <- ggarrange(richness_coverage_p, shannon_coverage_p, simpson_coverage_p, nrow = 1)
+
+alpha_pollen_fruitcrops_p
+```
+
+Species richness of plant sources in pollen is similar across fruitcrops, for q=1 diversity is higher in plum and apple farms compared to avocado and blackberry farms  
+>
+
+
+## HILL DIVERSITY BICHOS FAMILY
+
+
+Prepare input data
+
+```{r dataBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+absencePresence_df_long <-  absencePresence_df %>%
+                  #select(-Lab_code_rep) %>%
+                  pivot_longer(
+                    !c(Lab_code_rep, Fruitcrop, Lowest_assignment, Family, Bichos_group, Fruitcrop_bichos),
+                    names_to = "Genus_species", 
+                    values_to = "absencePresence") %>%
+                #group_by(Lab_code_rep, Family, Lowest_assignment, Bichos_group, Genus_species) %>%
+                  group_by(Lab_code_rep, Bichos_group, Genus_species) %>%
+                  summarise(absencePresence_data = max(absencePresence)) 
+
+head(data.frame(absencePresence_df_long), 5)
+table(absencePresence_df_long$Bichos_group)
+
+
+summary_bichos <- absencePresence_df_long %>% group_by(Lab_code_rep, Bichos_group) %>% summarise(total = sum(absencePresence_data)) 
+min(summary_bichos$total)
+max(summary_bichos$total) 
+mean(summary_bichos$total)
+
+
+summary_bichos %>% group_by(Bichos_group) %>% summarise(meanPlants = mean(total), min(total), max(total))
+
+
+(summary_bichos_hist <- summary_bichos %>% ggplot(aes(x=total)) + geom_histogram(fill= "#FEB24C") + facet_grid(. ~ Bichos_group, scales = "free",space="free") + theme_bw() + xlab("Total count of plant taxa") + ylab("N samples")
+)
+
+png(paste0(outputDir, "/Figures/persample_plant_count_histogram.png"), width = 3000, height = 2800, res = 300) 
+
+ggarrange(summary_fruitcrops_hist, summary_bichos_hist, nrow = 2)
+
+dev.off()
+
+# format Apis into a integer matrix
+incidence_apis <- absencePresence_df_long %>%
+          filter(Bichos_group == "Apis") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(- Bichos_group, -Genus_species) %>%
+          data.frame
+
+
+incidence_apis <- as.matrix(apply(incidence_apis[,-1],2,as.integer))
+rownames(incidence_apis) <- incidence_apis[,1]
+
+# format Bombus into a integer matrix
+incidence_bombus <- absencePresence_df_long %>%
+          filter(Bichos_group == "Bombus") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(- Bichos_group, -Genus_species) %>%
+          data.frame
+
+incidence_bombus <- as.matrix(apply(incidence_bombus[,-1],2,as.integer))
+rownames(incidence_bombus) <- incidence_bombus[,1]
+
+# format Non-Syrphidae into a integer matrix
+incidence_non_syr <- absencePresence_df_long %>%
+          filter(Bichos_group == "Non-Syrphidae") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(- Bichos_group, -Genus_species) %>%
+          data.frame
+
+incidence_non_syr <- as.matrix(apply(incidence_non_syr[,-1],2,as.integer))
+rownames(incidence_non_syr) <- incidence_non_syr[,1]
+
+# format Non-Syrphidae into a integer matrix
+incidence_syrphidae <- absencePresence_df_long %>%
+          filter(Bichos_group == "Syrphidae") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(- Bichos_group, -Genus_species) %>%
+          data.frame
+
+incidence_syrphidae <- as.matrix(apply(incidence_syrphidae[,-1],2,as.integer))
+rownames(incidence_syrphidae) <- incidence_syrphidae[,1]
+
+# format Others into a integer matrix
+incidence_other <- absencePresence_df_long %>%
+          filter(Bichos_group == "Other") %>%   
+          group_by(Lab_code_rep) %>%
+          spread(Lab_code_rep, absencePresence_data, fill = 0) %>% select(- Bichos_group, -Genus_species) %>%
+          data.frame
+
+incidence_other <- as.matrix(apply(incidence_other[,-1],2,as.integer))
+rownames(incidence_other) <- incidence_other[,1]
+
+# create a list 
+incidence_pollen <- list(Apis = incidence_apis, Bombus = incidence_bombus, Non_Syr = incidence_non_syr, Syrphidae = incidence_syrphidae, Other = incidence_other)
+str(incidence_pollen)
+
+
+
+```
+
+iNEXT on bichos grouping
+
+```{r inextCultivosIncidBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#  The estimated asymptotes are calculated via the functions ChaoRichness() for q = 0, ChaoShannon() for q = 1 and ChaoSimpson() for q = 2; see Chao et al. (2014) for the formulas of all asymptotic estimators.
+
+inext_pollen <- iNEXT(incidence_pollen, q = c(0, 1, 2), datatype = "incidence_raw")
+
+inext_pollen$DataInfo
+
+coverage_incidence <- estimateD(incidence_pollen, q = c(0, 1, 2), datatype = "incidence_raw", base = "coverage", conf = 0.95)
+
+```
+
+Completeness curve bichos group
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#Sample completeness curve (type=2) with confidence intervals (if se=TRUE): see Figs. 1b and 2b in Hsieh et al. (2016). This curve plots the sample coverage with respect to sample size for the same range described in (1).
+
+bichos_compl_curve <- ggiNEXT(inext_pollen, type = 2)
+
+bichos_compl_curve_p <- bichos_compl_curve + 
+                    bichos_color +
+                    bichos_fill + 
+                    pca_theme + 
+                    annotate(geom = "text", x = 70, y= 0.97, 
+                        label = "Apis (97%)", hjust = -.2) +
+                    annotate(geom = "text", x = 40, y= 1, 
+                        label = "Bombus (96%)", hjust = -.2) +
+                    annotate(geom = "text", x = 35, y= 0.88, 
+                        label = "Syrphidae (89%)", hjust = -.2) +
+                    annotate(geom = "text", x = 18, y= 1, 
+                        label = "Other (93%)", hjust = -.2) +
+                    annotate(geom = "text", x = 18, y= 0.98, 
+                        label = "Non-Syrphidae (92%)", hjust = -.2) +
+                    theme_set(theme_bw(base_size = 14)) + 
+                    theme(legend.position = "none", axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+bichos_compl_curve_p 
+ 
+
+png(paste0(outputDir, "/Figures/pollen_bichos_completeness_curve.png"), width = 2700, height = 1700, res = 250) 
+bichos_compl_curve_p 
+dev.off()
+    
+```
+
+>Sample coverage is high (> 89%) and very similar for all insect groups. 
+>
+
+
+Coverage-based curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# Coverage-based R/E curve (type=3): see Figs. 1c and 2c in Hsieh et al. (2016). This curve plots the diversity estimates with confidence intervals (if se=TRUE) as a function of sample coverage up to the maximum coverage obtained from the maximum size described in (1)
+
+bichos_coverage_curve <- ggiNEXT(inext_pollen, type = 3, facet.var = "Order.q")
+
+bichos_coverage_curve_p <- bichos_coverage_curve + 
+                    bichos_color +
+                    bichos_fill + 
+                    pca_theme + 
+                    theme_set(theme_bw(base_size = 14)) + 
+                    theme( axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+bichos_coverage_curve_p
+
+png(paste0(outputDir, "/Figures/pollen_bichos_RE_curve.png"), width = 3000, height = 1700, res = 230) 
+bichos_coverage_curve_p 
+dev.off()
+
+```
+
+Bichos Hill numbers estimates (coverageD)
+
+```{r cultivosAbundCoverage, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+coverage_incidence$ID <- paste("Incidence", coverage_incidence$Assemblage, coverage_incidence$Order.q, sep = "_")
+
+coverage_incidence_long <- coverage_incidence %>%
+            select(-Assemblage, -Order.q, -t, - Method, -SC) %>%
+            pivot_longer(!ID, 
+                  names_to = "iNEXT_est", 
+                  values_to = "estimate") %>%
+            mutate(ID = str_replace(ID, "Non_Syr", "Non-Syrphidae"))
+
+coverage_bichos <- coverage_incidence_long %>% separate_wider_delim(cols = ID, delim = "_", names = c("Data_type", "Bichos", "Hill_number"))
+
+
+```
+
+PLot Incidence Data (coverage)
+
+```{r cultivosAbundCoveragePlots, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.show = "hide"}
+
+richness_coverage_p <- coverage_bichos %>% 
+      filter(Hill_number == "0") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Bichos, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+           geom_point(shape=21, size=4, fill="grey")+
+       xlab("") + ylab("Richness") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+shannon_coverage_p <- coverage_bichos %>% 
+      filter(Hill_number == "1") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Bichos, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+              geom_point(shape=21, size=4, fill="grey")+
+        xlab("") + ylab("Hill-Shannon") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+simpson_coverage_p <- coverage_bichos %>% 
+      filter(Hill_number == "2") %>% 
+      pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+      ggplot(aes(x = Bichos, y = qD, group=1)) +
+           geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+              geom_point(shape=21, size=4, fill="grey")+
+        xlab("") + ylab("Hill-Simpson") +
+        div_theme + 
+        theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1))
+
+alpha_pollen_bichos_p <- ggarrange(richness_coverage_p, shannon_coverage_p, simpson_coverage_p, nrow = 1)
+alpha_pollen_bichos_p
+```
+
+## Hill diversity estimates using hilldiv package
+
+Prepare hilldiv data
+
+```{r prepHillDivData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+df_species <- data.frame(otu_table(ps_pollen_filt_Species))
+
+colnames(df_species) <- paste(as.data.frame(tax_table(ps_pollen_filt_Species))$Genus, as.data.frame(tax_table(ps_pollen_filt_Species))$Species, sep = "_")
+
+colnames(df_species) <- str_replace(colnames(df_species), pattern = ".?Genus+.*", replacement = "_sp.")
+
+
+asv_species_abund <- data.frame(t(df_species))
+
+asv_species_relabund <- data.frame(t(df_species))
+
+asv_species_to_incidence_fruitcrop <- to.incidence(asv_species_abund, pollen_hier_crop[, c(1,2)])
+
+asv_species_to_occurrence <- to.occurrences(asv_species_abund)
+
+asv_species_to_incidence_bichos <- to.incidence(asv_species_abund, pollen_hier_crop[, c(1,5)])
+
+```
+
+
+### Distance matrix (occurrence data)
+
+```{r distOccurr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+dist_q0 <- pair_dis(asv_species_to_occurrence, qvalue = 0)
+dist_q1 <- pair_dis(asv_species_to_occurrence, qvalue = 1)
+dist_q2 <- pair_dis(asv_species_to_occurrence, qvalue = 2)
+
+sorensen_dist_q0 <- as.dist(dist_q0$L1_CqN)
+sorensen_dist_q1 <- as.dist(dist_q1$L1_CqN)
+sorensen_dist_q2 <- as.dist(dist_q2$L1_CqN)
+
+#write.csv(sorensen_dist, paste0(dataDir, "/Sorensen_Hill_distance.csv"))
+
+```
+
+Test whether the the grouping factor (fruitcrop) has a
+significant effect on overall plant species composition based on incidence data. 
+
+```{r permanovaOccurr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+nrow(pollen_hier_crop)
+
+
+occurrence_permanova_q0 <- adonis2(t(sorensen_dist_q0) ~ Fruitcrop,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q0
+
+occurrence_permanova_q1 <- adonis2(t(sorensen_dist_q1) ~ Fruitcrop,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q1
+
+occurrence_permanova_q2 <- adonis2(t(sorensen_dist_q2) ~ Fruitcrop,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q2
+#Fruitcrop   3    4.694 0.12932 7.5751  1e-04 ***
+
+# Calculate multivariate dispersions
+crop_dispersion <- betadisper(t(sorensen_dist_q1) , pollen_hier_crop$Fruitcrop)
+
+plot(crop_dispersion)     
+
+# test for differences in dispersion 
+anova(crop_dispersion)
+     
+# Permutation test for F
+permutest(crop_dispersion, pairwise = TRUE, permutations = 99)
+     
+## Tukey's Honest Significant Differences
+(crop_HSD <- TukeyHSD(crop_dispersion))
+plot(crop_HSD)
+
+```
+
+
+>Fruit crop explains 13% of the variation in community composition of plant sources from pollen in insect visitors. There was no difference in dispersion  
+>
+
+Test whether the the grouping factor (insect group) has a
+significant effect on overall plant species composition based on incidence data. 
+
+```{r permanovaOccurrBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+occurrence_permanova_q0 <- adonis2(t(sorensen_dist_q0) ~ Bichos_group,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q0
+
+
+occurrence_permanova_q1 <- adonis2(t(sorensen_dist_q1) ~ Bichos_group,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q1
+
+occurrence_permanova_q2 <- adonis2(t(sorensen_dist_q2) ~ Bichos_group,
+               data = pollen_hier_crop, permutations=9999, na.rm = TRUE)
+occurrence_permanova_q2
+
+# Calculate multivariate dispersions
+bichos_dispersion <- betadisper(t(sorensen_dist_q1) , pollen_hier_crop$Bichos_group)
+
+plot(bichos_dispersion)     
+
+# test for differences in dispersion 
+anova(bichos_dispersion)
+     
+# Permutation test for F
+permutest(bichos_dispersion, pairwise = TRUE, permutations = 99)
+     
+## Tukey's Honest Significant Differences
+(bichos_HSD <- TukeyHSD(bichos_dispersion))
+plot(bichos_HSD)
+
+```
+
+>Plant community composition is significantly different between insect group but the variance explained by this predictor is lower than that explained by fruit crop. 
+
+
+Perform a NMDS 
+
+```{r NMDSOccurrBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# run NMDS q0
+set.seed(20102023)
+values_NMDS_q0 <- metaMDS(as.dist(sorensen_dist_q0), k = 4, trymax = 500)
+
+values_NMDS_q0$stress
+stressplot(values_NMDS_q0)
+
+# run NMDS q1
+set.seed(20102023)
+values_NMDS_q1 <- metaMDS(as.dist(sorensen_dist_q1), k = 4, trymax = 500)
+
+values_NMDS_q1$stress
+stressplot(values_NMDS_q1)
+
+# run NMDS q2
+set.seed(20102023)
+values_NMDS_q2 <- metaMDS(as.dist(sorensen_dist_q2), k = 4, trymax = 500)
+values_NMDS_q2$stress
+
+stressplot(values_NMDS_q2)
+
+```
+
+NMDS values for fruit crop plot
+
+```{r scoresNMDSOccurrFruit, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+NMDS_scores_q0 <- data.frame(NMDS1 = values_NMDS_q0$point[, 1], NMDS2 = values_NMDS_q0$point[,2], NMDS3 = values_NMDS_q0$point[, 3], NMDS4 = values_NMDS_q0$point[, 4], Group = as.factor(pollen_hier_crop[, 2]))
+
+NMDS_centroids_q0 = aggregate(NMDS_scores_q0[, c(1:2)], by = list(NMDS_scores_q0[, 
+            5]), FUN = mean)
+
+table(NMDS_scores_q0$Group)
+
+NMDS_scores_q0$Sample <- rownames(NMDS_scores_q0)
+
+colnames(NMDS_centroids_q0) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q0 <- merge(NMDS_scores_q0, NMDS_centroids_q0, by = "Group")
+
+
+NMDS_scores_q1 <- data.frame(NMDS1 = values_NMDS_q1$point[, 1], NMDS2 = values_NMDS_q1$point[,2], NMDS3 = values_NMDS_q1$point[, 3], NMDS4 = values_NMDS_q1$point[, 4], Group = as.factor(pollen_hier_crop[, 2]))
+
+
+NMDS_centroids_q1 = aggregate(NMDS_scores_q1[, c(1:2)], by = list(NMDS_scores_q1[, 
+            5]), FUN = mean)
+
+
+NMDS_scores_q1$Sample <- rownames(NMDS_scores_q1)
+
+colnames(NMDS_centroids_q1) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q1 <- merge(NMDS_scores_q1, NMDS_centroids_q1, by = "Group")
+
+NMDS_scores_q2 <- data.frame(NMDS1 = values_NMDS_q2$point[, 1], NMDS2 = values_NMDS_q2$point[,2], NMDS3 = values_NMDS_q2$point[, 3], NMDS4 = values_NMDS_q2$point[, 4], Group = as.factor(pollen_hier_crop[, 2]))
+
+NMDS_centroids_q2 = aggregate(NMDS_scores_q2[, c(1:2)], by = list(NMDS_scores_q2[, 
+            5]), FUN = mean)
+
+NMDS_scores_q2$Sample <- rownames(NMDS_scores_q2)
+
+colnames(NMDS_centroids_q2) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q2 <- merge(NMDS_scores_q2, NMDS_centroids_q2, by = "Group")
+
+```
+
+Plot NMDS results clustering Fruit crop using Occurrance data
+
+```{r plotNMDSoccurrFruit, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.width = 10, fig.height = 5}
+
+table(NMDS_scores_q0$Group)
+NMDS_scores_q0$Group <- sub(" .*", "", NMDS_scores_q0$Group)
+NMDS_scores_q1$Group <- sub(" .*", "", NMDS_scores_q1$Group)
+NMDS_scores_q2$Group <- sub(" .*", "", NMDS_scores_q2$Group)
+
+nmds_q0_fruitcrop_plot <- ggplot(NMDS_scores_q0, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q0, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        crop_color +
+        crop_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+
+nmds_q1_fruitcrop_plot <- ggplot(NMDS_scores_q1, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q1, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        crop_color +
+        crop_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+
+nmds_q2_fruitcrop_plot <- ggplot(NMDS_scores_q2, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q2, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        crop_color +
+        crop_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+                
+ggarrange(nmds_q0_fruitcrop_plot, nmds_q1_fruitcrop_plot, nmds_q2_fruitcrop_plot, nrow = 1, labels = c("q=0", "q=1", "q=2"), common.legend = TRUE)
+
+```
+
+NMDS values for insect group plot
+
+```{r scoresNMDSOccurrBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+NMDS_scores_q0 <- data.frame(NMDS1 = values_NMDS_q0$point[, 1], NMDS2 = values_NMDS_q0$point[,2], NMDS3 = values_NMDS_q0$point[, 3], NMDS4 = values_NMDS_q0$point[, 4], Group = as.factor(pollen_hier_crop[, 5]))
+
+NMDS_centroids_q0 = aggregate(NMDS_scores_q0[, c(1:2)], by = list(NMDS_scores_q0[, 
+            5]), FUN = mean)
+
+table(NMDS_scores_q0$Group)
+
+NMDS_scores_q0$Sample <- rownames(NMDS_scores_q0)
+
+colnames(NMDS_centroids_q0) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q0 <- merge(NMDS_scores_q0, NMDS_centroids_q0, by = "Group")
+
+
+NMDS_scores_q1 <- data.frame(NMDS1 = values_NMDS_q1$point[, 1], NMDS2 = values_NMDS_q1$point[,2], NMDS3 = values_NMDS_q1$point[, 3], NMDS4 = values_NMDS_q1$point[, 4], Group = as.factor(pollen_hier_crop[, 5]))
+NMDS_centroids_q1 = aggregate(NMDS_scores_q1[, c(1:2)], by = list(NMDS_scores_q1[, 
+            5]), FUN = mean)
+
+
+NMDS_scores_q1$Sample <- rownames(NMDS_scores_q1)
+
+colnames(NMDS_centroids_q1) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q1 <- merge(NMDS_scores_q1, NMDS_centroids_q1, by = "Group")
+
+NMDS_scores_q2 <- data.frame(NMDS1 = values_NMDS_q2$point[, 1], NMDS2 = values_NMDS_q2$point[,2], NMDS3 = values_NMDS_q2$point[, 3], NMDS4 = values_NMDS_q2$point[, 4], Group = as.factor(pollen_hier_crop[, 5]))
+NMDS_centroids_q2 = aggregate(NMDS_scores_q2[, c(1:2)], by = list(NMDS_scores_q2[, 
+            5]), FUN = mean)
+
+NMDS_scores_q2$Sample <- rownames(NMDS_scores_q2)
+
+colnames(NMDS_centroids_q2) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q2 <- merge(NMDS_scores_q2, NMDS_centroids_q2, by = "Group")
+
+
+```
+
+Plot NMDS results clustering Insect group using Occurrance data
+
+```{r plotNMDSoccurrBichos, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.width = 10, fig.height = 5}
+
+table(NMDS_scores_q0$Group)
+NMDS_scores_q0$Group <- sub(" .*", "", NMDS_scores_q0$Group)
+NMDS_scores_q1$Group <- sub(" .*", "", NMDS_scores_q1$Group)
+NMDS_scores_q2$Group <- sub(" .*", "", NMDS_scores_q2$Group)
+
+nmds_q0_bichos_plot <- ggplot(NMDS_scores_q0, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q0, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        bichos_color +
+        bichos_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+
+nmds_q1_bichos_plot <- ggplot(NMDS_scores_q1, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q1, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        bichos_color +
+        bichos_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+
+nmds_q2_bichos_plot <- ggplot(NMDS_scores_q2, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+                stat_ellipse(geom= "polygon", alpha = 0.05) + 
+                geom_point(size = 2) + 
+        geom_point(data = NMDS_scores_q2, aes(x = x_cen, y = y_cen, fill = Group), shape = 21, colour = "black", size = 5, show.legend = TRUE) +
+        bichos_color +
+        bichos_fill +
+        ord_theme +
+        theme(panel.background = element_rect(fill = "white", 
+                  colour = "grey"))
+                
+ggarrange(nmds_q0_bichos_plot, nmds_q1_bichos_plot, nmds_q2_bichos_plot, nrow = 1, labels = c("q=0", "q=1", "q=2"), common.legend = TRUE)
+
+```
+
+Figure 4
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+png(paste0(outputDir, "/Figures/Figure4.png"), width = 3000, height = 2800, res = 300) 
+
+pushViewport(viewport(layout  =  grid.layout(30, 12)))
+vplayout <- function(x, y) viewport(layout.pos.row  =  x, layout.pos.col  =  y)
+
+print(alpha_pollen_fruitcrops_p + theme(plot.title = element_text(size = 20, hjust=0.01, vjust = -3.0, face = "bold",family="Helvetica"))+ggtitle("a."), vp = vplayout(1:9, 1:12))
+
+print(alpha_pollen_bichos_p + theme(plot.title = element_text(size = 20, hjust=0.01, vjust = -3.0, face = "bold",family="Helvetica"))+ggtitle("b."), vp = vplayout(9:18, 1:12))
+
+print(nmds_q1_fruitcrop_plot + theme(legend.position = "right", plot.title = element_text(size = 20, hjust= -0.10, vjust = 1.0, face = "bold",family="Helvetica"))+ggtitle("c."), vp = vplayout(18:30, 1:6))
+
+print(nmds_q1_bichos_plot + theme(legend.position = "right", plot.title = element_text(size = 20, hjust = -0.20, vjust = 1.0, face = "bold",family="Helvetica"))+ggtitle("d."), vp = vplayout(18:30, 7:12))
+
+dev.off()
+
+```
+
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```

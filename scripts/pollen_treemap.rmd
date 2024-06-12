@@ -1,0 +1,481 @@
+---
+title: 'ITS2 beta diversity analysis'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(MicEco)
+library(fantaxtic)
+library(ggtext)
+library(ggh4x)
+library(png)
+library(cowplot)
+library(grid)
+library(gtable)
+library(treemapify)
+library(RColorBrewer)
+
+#phyloseq section
+library(phyloseq)
+library(Biostrings)
+library(microbiome)
+library(microViz)
+
+# diversity 
+library(iNEXT)
+library(hilldiv)
+
+#rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+## WORKING DIRECTORIES
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+source("/home/kari/Dropbox/REPO/PollenMetabarcoding/pollen_graphics_param.R")
+
+```
+
+## METADATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+metadata <- read.table(paste0(dataDir, "/ps_ITS2_DB4_metadata.txt"), header = TRUE, sep = "\t")
+
+```
+
+## LOAD AND CLEAN ITS2 DATA
+
+Load ITS2 datasets using NCBI (Dubois) database taxonomy assignment
+
+```{r phyloseq, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ps_pollen <- readRDS(paste0(dataDir, "/ps_ITS2_DB4_derep_geoRestricted.rds"))
+
+ps_pollen_filt <- ps_pollen %>%
+    subset_taxa(!is.na(Genus)) %>% subset_samples(!is.na(Fruitcrop) & Rep_ID == 1 & !is.na(Order) & Lab_code_rep != "CA17")
+ps_pollen_filt
+
+# remove taxa with zero counts
+ps_pollen_filt <- prune_taxa(taxa_sums(ps_pollen_filt) >0, ps_pollen_filt)
+
+```
+
+Replace NA with the higher level taxonomic assignment 
+
+```{r replaceNA, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+tax <- data.frame(tax_table(ps_pollen_filt))
+head(tax)
+
+tax[is.na(tax)] <- "NA"
+
+for (i in 1:nrow(tax)){
+    if (tax[i,2] == "NA"){
+    kingdom <- paste("Kingdom_", tax[i,1], sep = "")
+    tax[i, 2:7] <- kingdom
+    } else if (tax[i,3] == "NA"){
+    phylum <- paste("Phylum_", tax[i,2], sep = "")
+    tax[i, 3:7] <- phylum
+    } else if (tax[i,4] == "NA"){
+    class <- paste("Class_", tax[i,3], sep = "")
+    tax[i, 4:7] <- class
+    } else if (tax[i,5] == "NA"){
+    order <- paste("Order_", tax[i,4], sep = "")
+    tax[i, 5:7] <- order
+    } else if (tax[i,6] == "NA"){
+    family <- paste("Family_", tax[i,5], sep = "")
+    tax[i, 6:7] <- family
+    } else if ((tax[i,7] == "NA" | tax[i,7] == "sp" | tax[i,7] == "sp." )){
+    tax$Species[i] <- paste("Genus_", tax[i,6], sep = "")
+} else if (tax[i,7] == "NA"){
+}
+}
+
+tax_table(ps_pollen_filt) <- as.matrix(tax)
+
+```
+
+Agglomerate taxa
+
+```{r taxGlom, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ps_pollen_filt_Species <- tax_glom(ps_pollen_filt, "Species")
+ps_pollen_filt_Species
+```
+
+### Insect visitor data
+
+```{r insectData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+visitor_data <- ps_pollen_filt_Species %>% sample_data %>% data.frame
+
+tax_visitors <- visitor_data %>% select(Order, Family, Genus, Lowest_assignment)
+
+tax_visitors[is.na(tax_visitors)] <- "NA"
+
+```
+
+
+Replace NA with highest taxonomic assinment
+
+```{r cleanInsectTax, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+for (i in 1:nrow(tax_visitors)){
+    if (tax_visitors[i,2] == "NA"){
+    order <- paste("Order_", tax_visitors[i,1], sep = "")
+    tax_visitors[i, 2:4] <- order
+    } else if (tax_visitors[i,3] == "NA"){
+   family <- paste("Family_", tax_visitors[i,2], sep = "")
+    tax_visitors[i, 3:4] <- family
+    } else if ((tax_visitors[i,4] == "NA")){
+    tax_visitors$Lowest_assignment[i] <- paste("Genus_", tax_visitors[i,2], sep = "")
+} else if (tax_visitors[i,4] == "NA"){
+}
+}
+
+# merge with df
+visitor_data_subset <- visitor_data %>% select(-Order, -Family, -Subfamily, -Tribe, -Genus, -Species, -Morphospecies, -Lowest_assignment)
+
+head(rownames(visitor_data))
+head(rownames(tax_visitors))
+
+visitor_data_subset <- merge(visitor_data_subset, tax_visitors, by = 0, all.x = FALSE) 
+
+sampling_lowest <- visitor_data_subset %>% 
+          group_by(Fruitcrop) %>%
+          summarise(count_lowest = n_distinct(Lowest_assignment)) %>%
+          data.frame
+
+sampling_lowest
+
+visitor_data_subset <- sample_data(visitor_data_subset)
+sample_names(visitor_data_subset) <- sample_data(visitor_data_subset)$Row.names
+
+# replace sample data pollen object
+sample_data(ps_pollen_filt_Species) <- visitor_data_subset
+
+```
+
+## Incidence data fruit crops
+
+
+```{r prepHillDivData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+pollen_hier_crop <- ps_pollen_filt_Species %>%
+                sample_data %>% 
+                data.frame %>%
+                filter(!is.na(Fruitcrop)) %>%
+                select(Lab_code_rep, Fruitcrop)  
+
+str(pollen_hier_crop)
+
+# ASV relative abundance table
+
+df_species <- data.frame(otu_table(ps_pollen_filt_Species))
+
+colnames(df_species) <- paste(as.data.frame(tax_table(ps_pollen_filt_Species))$Genus, as.data.frame(tax_table(ps_pollen_filt_Species))$Species, sep = "_")
+
+colnames(df_species) <- str_replace(colnames(df_species), pattern = ".?Genus+.*", replacement = "_sp.")
+
+asv_species_abund <- data.frame(t(df_species))
+head(asv_species_abund)
+
+asv_species_to_incidence_fruitcrop <- to.incidence(asv_species_abund, pollen_hier_crop[, c(1,2)])
+head(asv_species_to_incidence_fruitcrop)
+
+```
+
+Tree map fruit crop 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+tax_df <- tax_table(ps_pollen_filt_Species) %>% data.frame %>% group_by(Family, Genus, Species) %>% summarise(dummy = n_distinct(Genus)) %>% data.frame %>% select(Family, Genus, Species) %>% mutate(Genus_species = paste(Genus, Species, sep =  "_"))
+
+tax_df$Genus_species <- str_replace(tax_df$Genus_species, pattern = ".?Genus+.*", replacement = "_sp.")
+
+# frecuency data frame according to fruit crop 
+
+pollen_freq_df <- as.data.frame(asv_species_to_incidence_fruitcrop)
+pollen_freq_df$Genus_species <- rownames(pollen_freq_df)
+names(pollen_freq_df)
+pollen_freq_df$overall_freq <- rowSums(pollen_freq_df[,1:4])
+pollen_freq_df <- pollen_freq_df %>% pivot_longer(cols = c("Persea americana":"Rubus"), names_to = "Fruitcrop", values_to = "freq")
+sample_totals <- data.frame(table(sample_data(pollen_hier_crop)$Fruitcrop))
+names(sample_totals) <- c("Fruitcrop", "n_samples")
+pollen_freq_df <- left_join(pollen_freq_df, sample_totals, by = "Fruitcrop")
+pollen_freq_df$overall_prevalence <- pollen_freq_df$overall_freq/nrow(sample_data(ps_pollen_filt_Species))
+pollen_freq_df$perfruitcrop_prevalence <- pollen_freq_df$freq/nrow(sample_data(ps_pollen_filt_Species))
+
+pollen_freq_df <- left_join(pollen_freq_df, tax_df, by = "Genus_species")
+
+pollen_freq_df$Genus_species_cutoff <- ifelse(pollen_freq_df$overall_prevalence > 0.2, pollen_freq_df$Genus_species, " ") 
+pollen_freq_df$Genus_species_cutoff <- str_replace(pollen_freq_df$Genus_species_cutoff, "_", " ")
+
+
+# Update taxonomy: 
+# Viburnum costaricanum (Viburnaceae), este cambió de familia, antes en Adoxaceae
+
+pollen_freq_df$Family <- ifelse(pollen_freq_df$Genus_species_cutoff == "Viburnum costaricanum", "Viburnaceae",pollen_freq_df$Family  )
+
+table(pollen_freq_df$Genus_species_cutoff)
+table(pollen_freq_df$Family)
+
+#write.csv(pollen_freq_df, paste0(outputDir, "/03_Exploration/pollen_freq_df.csv"))
+
+tax_theme_1 <- theme(ggh4x.facet.nestline = element_line(colour = "black"),text = element_text(size = 12),legend.position="bottom", legend.direction = "horizontal", legend.key.size = unit(0.7, 'cm'), legend.margin=margin(c(0,0,8,0)), axis.text.x = element_text(face = "italic", size = 11), axis.text.y = element_text(face = "italic", size = 11), axis.ticks.x=element_blank(), panel.background = element_blank(), legend.title=element_text(size = 12), strip.background = element_rect(colour="black", fill="grey10", linewidth = 1.3), strip.text = element_text(colour = 'white', face = "bold.italic", size = 12))
+
+
+# number of taxa after filter 
+check <- pollen_freq_df %>% 
+    filter(perfruitcrop_prevalence >0.03) %>% droplevels() 
+nrow(table(check$Family))
+nrow(table(check$Genus_species))
+
+n <- 36
+colrs <- brewer.pal.info[brewer.pal.info$colorblind == TRUE, ]
+col_vec = unlist(mapply(brewer.pal, colrs$maxcolors, rownames(colrs)))
+col <- sample(col_vec, n)
+area <- rep(1,n)
+pie(area, col = col)
+
+col <-  c("#BCBDDC","#A6BDDB","#ADDD8E","#2B8CBE","#FEE391","#D95F02","grey","#276419","#49006A","#E5F5F9","#F7FCFD","#EFEDF5","#DF65B0","#7FBC41","#E0F3DB","#E6AB02","#F0F0F0","#E7D4E8","#FFD92F","#E7298A","#B2ABD2","#FDBB84","#C51B7D","#4575B4","#FEB24C","#0868AC","#006D2C","#FFF7FB","#DFC27D","#FB6A4A","#F7F4F9","#3690C0","#1B9E77","#6BAED6","#7F2704", "#313695")
+
+(fruitcrops_tp <- pollen_freq_df %>% 
+    filter(perfruitcrop_prevalence > 0.03) %>% droplevels() %>% 
+    ggplot(aes(area = perfruitcrop_prevalence, fill = Family, label = Family, subgroup = Family, subgroup2 = Genus_species_cutoff,  subgroup3 = Genus_species)) +
+    geom_treemap() +
+    geom_treemap_subgroup_border(color = "black",size = 2.5) +
+    geom_treemap_subgroup3_border(color = "grey20", size = 1.3) +
+    geom_treemap_subgroup_text(place = "centre", grow = T, alpha = 0.9, colour = "black", fontface = "bold", min.size = 0) +
+    geom_treemap_subgroup2_text(place = "bottom", grow = T, alpha = 0.8, colour = "grey10", fontface = "italic", min.size = 1,  reflow = TRUE) +
+    facet_nested(. ~ Fruitcrop, scales = "free",space="free", nest_line = element_line(linetype = 1)) + 
+   scale_fill_manual(values = unname(col), guide = F) +
+    tax_theme_1
+)
+
+# barplot 
+names(pollen_freq_df)
+head(data.frame(pollen_freq_df))
+
+# prepare data
+overall_df <- pollen_freq_df %>% 
+                    filter(overall_prevalence >= 0.18 & perfruitcrop_prevalence > 0.03) %>%
+                    group_by(Genus_species) %>%
+                    dplyr::slice(1) %>%
+                    data.frame
+head(overall_df, 15)
+nrow(table(overall_df$Family))
+
+
+tax_theme_2 <- theme(ggh4x.facet.nestline = element_line(colour = "black"),text = element_text(size = 12),legend.position="bottom", legend.direction = "horizontal", , axis.text.x = element_text( size = 9.5, angle = 90, vjust = 0.8), axis.text.y = element_text(face = "italic", size = 9.5), axis.title.x = element_text(size = 10), panel.background = element_blank(), legend.title=element_text(size = 12), strip.background = element_rect(colour="black", fill="grey10", linewidth = 1), strip.text.y = element_text(colour = 'white', face = "bold", size = 10, angle = 0))
+
+
+(barplot_tp <-pollen_freq_df %>% 
+                    filter(overall_prevalence >= 0.2 & perfruitcrop_prevalence > 0.03) %>%
+                    mutate(Genus_species_cutoff = reorder(Genus_species_cutoff, overall_prevalence)) %>%
+                    group_by(Genus_species) %>%
+                    arrange(desc(overall_prevalence)) %>%
+                    dplyr::slice(1) %>%
+    ggplot(aes(y = Genus_species_cutoff, x = overall_prevalence, fill = overall_prevalence)) +
+    geom_bar(stat = "identity", color = "black", fill = "grey60", width = 0.7, position = position_dodge(width=0.5)) +
+    ylab("") +
+    scale_x_continuous( "Prevalence (%)", label = scales::percent, limits = c(0,1), expand = c(0,0)) +
+    facet_grid( Family ~., scales = "free",space="free") + 
+    ggplot2::xlab("Prevalence (%)") +
+      tax_theme_2
+)
+    
+
+```
+
+
+Figure 3
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+png(paste0(outputDir, "/Figures/Figure3_test.png"), width = 3500, height = 3300, res = 260) 
+
+pushViewport(viewport(layout  =  grid.layout(30, 10)))
+vplayout <- function(x, y) viewport(layout.pos.row  =  x, layout.pos.col  =  y)
+
+print(fruitcrops_tp, vp = vplayout(17:30, 1:10))
+print(barplot_tp, vp = vplayout(1:16, 1:5))
+
+dev.off()
+
+
+```
+
+
+
+## Incidence data insect groups
+
+
+```{r prepHillDivData_insects, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+pollen_hier_crop <- ps_pollen_filt_Species %>%
+                sample_data %>% 
+                data.frame %>%
+                filter(!is.na(Fruitcrop)) %>%
+                select(Lab_code_rep, Lowest_assignment, Family, Bichos_group)  
+
+str(pollen_hier_crop)
+pollen_hier_crop$Bichos_group <- ifelse(pollen_hier_crop$Bichos_group == "Lasioglossum"| pollen_hier_crop$Bichos_group == "Astylus" | pollen_hier_crop$Bichos_group == "Astylus" | pollen_hier_crop$Bichos_group == "Partamona",  "Other", pollen_hier_crop$Bichos_group)
+
+table(pollen_hier_crop$Bichos_group)
+
+# ASV relative abundance table
+
+df_species <- data.frame(otu_table(ps_pollen_filt_Species))
+
+colnames(df_species) <- paste(as.data.frame(tax_table(ps_pollen_filt_Species))$Genus, as.data.frame(tax_table(ps_pollen_filt_Species))$Species, sep = "_")
+
+
+colnames(df_species) <- str_replace(colnames(df_species), pattern = ".?Genus+.*", replacement = "_sp.")
+
+asv_species_abund <- data.frame(t(df_species))
+
+asv_species_to_incidence_bichos <- to.incidence(asv_species_abund, pollen_hier_crop[, c(1,4)])
+head(asv_species_to_incidence_bichos)
+
+asv_species_to_occurrence_bichos <- to.occurrences(asv_species_abund)
+
+asv_species_to_incidence_bichos <- to.incidence(asv_species_abund, pollen_hier_crop[, c(1,4)])
+head(asv_species_to_incidence_bichos)
+
+```
+
+Tree map
+
+```{r treemapInsects, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+
+tax_df <- tax_table(ps_pollen_filt_Species) %>% data.frame %>% group_by(Family, Genus, Species) %>% summarise(dummy = n_distinct(Genus)) %>% data.frame %>% select(Family, Genus, Species) %>% mutate(Genus_species = paste(Genus, Species, sep =  "_"))
+
+tax_df$Genus_species <- str_replace(tax_df$Genus_species, pattern = ".?Genus+.*", replacement = "_sp.")
+
+# frecuency data frame according to insect group 
+
+pollen_freq_df <- as.data.frame(asv_species_to_incidence_bichos)
+pollen_freq_df$Genus_species <- rownames(pollen_freq_df)
+names(pollen_freq_df)
+pollen_freq_df$overall_freq <- rowSums(pollen_freq_df[,1:4])
+pollen_freq_df <- pollen_freq_df %>% pivot_longer(cols = c("Bombus":"Syrphidae"), names_to = "Bichos_group", values_to = "freq")
+sample_totals <- data.frame(table(sample_data(pollen_hier_crop)$Bichos_group))
+names(sample_totals) <- c("Bichos_group", "n_samples")
+pollen_freq_df <- left_join(pollen_freq_df, sample_totals, by = "Bichos_group")
+pollen_freq_df$overall_prevalence <- pollen_freq_df$overall_freq/nrow(sample_data(ps_pollen_filt_Species))
+pollen_freq_df$perbichos_prevalence <- pollen_freq_df$freq/nrow(sample_data(ps_pollen_filt_Species))
+
+pollen_freq_df <- left_join(pollen_freq_df, tax_df, by = "Genus_species")
+
+
+pollen_freq_df$Genus_species_cutoff <- ifelse(pollen_freq_df$overall_prevalence > 0.2, pollen_freq_df$Genus_species, " ") 
+pollen_freq_df$Genus_species_cutoff <- str_replace(pollen_freq_df$Genus_species_cutoff, "_", " ")
+
+# Update taxonomy: 
+# Viburnum costaricanum (Viburnaceae), este cambió de familia, antes en Adoxaceae
+
+pollen_freq_df$Family <- ifelse(pollen_freq_df$Genus_species_cutoff == "Viburnum costaricanum", "Viburnaceae",pollen_freq_df$Family  )
+
+pollen_freq_df$Bichos_group <- ifelse(pollen_freq_df$Bichos_group == "Non-Syrphidae", "Non-Syr", pollen_freq_df$Bichos_group)
+
+# check data 
+rare <- pollen_freq_df %>% filter(overall_freq == 1 ) %>% group_by(Family, Genus, Genus_species) %>%  dplyr::slice(1)
+nrow(table(rare$Family))/nrow(sample_data(ps_pollen_filt_Species))
+nrow(table(rare$Genus))/nrow(sample_data(ps_pollen_filt_Species))
+nrow(table(rare$Species))/nrow(sample_data(ps_pollen_filt_Species))
+
+#write.csv(pollen_freq_df, paste0(outputDir, "/03_Exploration/pollen_freq__insect_df.csv"))
+
+
+
+
+# number of taxa after filter 
+check <- pollen_freq_df %>% 
+    filter(perbichos_prevalence >0.03) %>% droplevels() 
+nrow(table(check$Family))
+nrow(table(check$Genus_species))
+
+
+col <-  c("#BCBDDC","#A6BDDB","#ADDD8E","#2B8CBE","#FEE391","#D95F02","grey","#276419","#49006A","#E5F5F9","#F7FCFD","#EFEDF5","#DF65B0","#7FBC41","#E0F3DB","#E6AB02","#F0F0F0","#E7D4E8","#FFD92F","#E7298A","#B2ABD2","#FDBB84","#C51B7D","#4575B4","#FEB24C","#0868AC","#006D2C","#FFF7FB","#DFC27D","#FB6A4A","#F7F4F9","#3690C0","#1B9E77","#6BAED6","#7F2704", "#313695")
+
+
+(bichos_tp <- pollen_freq_df %>% 
+    filter(perbichos_prevalence > 0.03) %>% droplevels() %>% 
+    ggplot(aes(area = perbichos_prevalence, fill = Family, label = Family, subgroup = Family, subgroup2 = Genus_species_cutoff,  subgroup3 = Genus_species)) +
+    geom_treemap() +
+   geom_treemap_subgroup_border(color = "black",size = 2.5) +
+    geom_treemap_subgroup3_border(color = "grey20", size = 1.3) +
+    geom_treemap_subgroup_text(place = "centre", grow = T, alpha = 0.9, colour = "black", fontface = "bold", min.size = 0) +
+    geom_treemap_subgroup2_text(place = "bottom", grow = T, alpha = 0.8, colour = "grey10", fontface = "italic", min.size = 1,  reflow = TRUE) +
+    facet_nested(. ~ Bichos_group, scales = "free",space="free", nest_line = element_line(linetype = 1)) + 
+   scale_fill_manual(values = unname(col), guide = F) +
+    tax_theme_1
+)
+
+
+```
+
+
+
+Suppl treemap insect groups
+
+```{r Figure3v2, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+png(paste0(outputDir, "/Figures/Treemap_bichos.png"), width = 3500, height = 1500, res = 260) 
+
+pushViewport(viewport(layout  =  grid.layout(13, 10)))
+vplayout <- function(x, y) viewport(layout.pos.row  =  x, layout.pos.col  =  y)
+
+print(bichos_tp, vp = vplayout(1:13, 1:10))
+
+
+dev.off()
+
+
+```
+
+
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

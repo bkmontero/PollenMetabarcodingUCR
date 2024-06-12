@@ -1,0 +1,1190 @@
+---
+title: 'ITS2 explore assignment across classifiers'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(MicEco)
+
+#phyloseq section
+library(phyloseq)
+library(Biostrings)
+library(microbiome)
+
+#rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+## WORKING DIRECTORIES
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+```
+
+## METADATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+pollen <- import_qiime_sample_data(mapfilename = paste0(dataDir, "/pollen_metadata_2023_10_17.tsv"))
+
+```
+
+
+## GRAPHICAL PARAMETERS
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+source("/home/kari/Dropbox/REPO/PollenMetabarcoding/pollen_graphics_param.R")
+#theme_set(theme_bw())
+
+```
+## LOAD ITS2 DATA
+
+Load ITS2 datasets using NCBI (Dubois) database taxonomy assignment
+
+
+### ITS2_1_no_derep
+
+Merge to create phyloseq object 
+
+```{r psObject, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_1_no_derep <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_1_no_derep/ITS2_1_no_derep.biom"))
+
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+ps_ITS2_1_no_derep <- merge_phyloseq(t(otu_table(ITS2_1_no_derep)), tax_table(ITS2_1_no_derep), pollen, rep_seqs)
+
+#check that all samples are there
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_1_no_derep))
+names(sequences) <- taxa_names(ps_ITS2_1_no_derep)
+ps_ITS2_1_no_derep <- merge_phyloseq(ps_ITS2_1_no_derep, sequences)
+
+# Rename ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_1_no_derep) <- paste0("ASV", seq(ntaxa(ps_ITS2_1_no_derep)))
+```
+
+
+Clean data
+
+```{r cleanTax, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_1_no_derep <- ps_ITS2_1_no_derep %>% subset_samples(Sequencing_run != "CIBCM" & !is.na(Fruitcrop)) 
+
+# clean taxonomy
+tax <- data.frame(tax_table(ps_ITS2_1_no_derep))
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+head(tax_clean)
+
+tax_table(ps_ITS2_1_no_derep) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_1_no_derep) <- cbind(tax_table(ps_ITS2_1_no_derep), 
+    rownames(tax_table(ps_ITS2_1_no_derep)), names(sequences))
+colnames(tax_table(ps_ITS2_1_no_derep)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#tax_table(ps_ITS2_1_no_derep)[1:3, 1:9]
+
+ps_ITS2_1_no_derep_filt <- ps_ITS2_1_no_derep %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+
+# Prune samples according to minimum sequencing depth of 1000 reads
+
+#threshold_depth <- 1000
+#ps_ITS2_1_no_derep <- prune_samples(sample_sums(ps_clean) >= threshold_depth, ps_clean)
+
+# Add sequencing depth column 
+sample_data(ps_ITS2_1_no_derep_filt)$Seq_depth <- sample_sums(ps_ITS2_1_no_derep_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_1_no_derep_filt) <- sample_data(ps_ITS2_1_no_derep_filt)$Lab_code_rep
+
+
+# Update metadata
+metadata <- data.frame(sample_data(ps_ITS2_1_no_derep_filt))
+
+summary(metadata$Seq_depth)
+
+#check rep
+rep <- ps_ITS2_1_no_derep_filt %>%  subset_samples(Rep == "Yes")
+sample_names(rep)
+
+```
+
+Explore assignment
+
+```{r assignmPS1, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+subset_taxa(ps_ITS2_1_no_derep_filt, is.na(Class))
+subset_taxa(ps_ITS2_1_no_derep_filt, is.na(Order))
+subset_taxa(ps_ITS2_1_no_derep_filt, is.na(Family))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS1, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_1_no_derep_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_1_no_derep_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_1_no_derep_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_1_no_derep_filt))[, !is.na(tax_table(ps_ITS2_1_no_derep_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_1_no_derep_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+
+# Boxplot, fraction assigned by SampleType
+
+assignment_db1 <- fractionReadsAssigned.L
+
+p1_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("Untrained and not dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+p1_assign
+
+
+Table1 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+#### ITS2_2_derep
+Merge to create phyloseq object 
+
+```{r psDB2, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_2_derep <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_2_derep/ITS2_2_derep.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+ps_ITS2_2_derep <- merge_phyloseq(t(otu_table(ITS2_2_derep)), tax_table(ITS2_2_derep), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_2_derep))
+names(sequences) <- taxa_names(ps_ITS2_2_derep)
+ps_ITS2_2_derep <- merge_phyloseq(ps_ITS2_2_derep, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_2_derep) <- paste0("ASV", seq(ntaxa(ps_ITS2_2_derep)))
+
+```
+
+Clean data
+
+```{r cleanPS2, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_2_derep <- ps_ITS2_2_derep %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_2_derep))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_2_derep) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_2_derep) <- cbind(tax_table(ps_ITS2_2_derep), 
+    rownames(tax_table(ps_ITS2_2_derep)), names(sequences))
+head(tax_table(ps_ITS2_2_derep))
+
+colnames(tax_table(ps_ITS2_2_derep)) <- 
+  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+# remove Unassigned taxa
+ps_ITS2_2_derep_filt <- ps_ITS2_2_derep %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+
+# Add sequencing depth column 
+sample_data(ps_ITS2_2_derep_filt)$Seq_depth <- sample_sums(ps_ITS2_2_derep_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_2_derep_filt) <- sample_data(ps_ITS2_2_derep_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_2_derep_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS2, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_2_derep_filt, is.na(Class)))
+(subset_taxa(ps_ITS2_2_derep_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_2_derep_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS2, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_2_derep_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_2_derep_filt)))
+
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_2_derep_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_2_derep_filt))[, !is.na(tax_table(ps_ITS2_2_derep_filt))[,x]]) / readsPerSample
+})
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_2_derep_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+#seq_run <- metadata[, c("Lab_code_rep", "Sequencing_run", "Fruitcrop")] 
+#colnames(seq_run) <- c("SampleID", "Sequencing_run", "Fruitcrop")
+#str(fractionReadsAssigned.L)
+
+#fractionReadsAssigned.L <- left_join(fractionReadsAssigned.L, seq_run, by = "SampleID")
+
+#fractionReadsAssigned.S <- fractionReadsAssigned.L %>% filter(Sequencing_run != "First", !is.na(Fruitcrop))
+
+assignment_db2 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p2_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("Untrained and dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+p2_assign
+
+Table2 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+#p2_assign_plant <- ggplot(fractionReadsAssigned.S, aes(y = fractionReadsAssigned, x = taxlevelf, fill = Fruitcrop)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB2 Untrained and dereplicated ITS2 classifier (3302 ASVs)") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+#p2_assign_plant
+
+```
+
+#### ITS2_3_no_derep_geoRestricted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB3, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_3_no_derep_geoRestricted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_3_no_derep_geoRestricted/ITS2_3_no_derep_geoRestricted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_3_no_derep_geoRestricted <- merge_phyloseq(t(otu_table(ITS2_3_no_derep_geoRestricted)), tax_table(ITS2_3_no_derep_geoRestricted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_3_no_derep_geoRestricted))
+names(sequences) <- taxa_names(ps_ITS2_3_no_derep_geoRestricted)
+ps_ITS2_3_no_derep_geoRestricted <- merge_phyloseq(ps_ITS2_3_no_derep_geoRestricted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_3_no_derep_geoRestricted) <- paste0("ASV", seq(ntaxa(ps_ITS2_3_no_derep_geoRestricted)))
+
+```
+
+Clean data
+
+```{r cleanPS3, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_3_no_derep_geoRestricted <- ps_ITS2_3_no_derep_geoRestricted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_3_no_derep_geoRestricted))
+
+
+tax_table(ps_ITS2_3_no_derep_geoRestricted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_3_no_derep_geoRestricted) <- cbind(tax_table(ps_ITS2_3_no_derep_geoRestricted), 
+    rownames(tax_table(ps_ITS2_3_no_derep_geoRestricted)), names(sequences))
+colnames(tax_table(ps_ITS2_3_no_derep_geoRestricted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_3_no_derep_geoRestricted
+#tax_table(ps_ITS2_3_no_derep_geoRestricted)[1:3, 1:9]
+
+ps_ITS2_3_no_derep_geoRestricted_filt <- ps_ITS2_3_no_derep_geoRestricted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+# Add sequencing depth column 
+sample_data(ps_ITS2_3_no_derep_geoRestricted_filt)$Seq_depth <- sample_sums(ps_ITS2_3_no_derep_geoRestricted_filt)
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_3_no_derep_geoRestricted_filt) <- sample_data(ps_ITS2_3_no_derep_geoRestricted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_3_no_derep_geoRestricted_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS3, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_3_no_derep_geoRestricted_filt, is.na(Class)))
+(subset_taxa(ps_ITS2_3_no_derep_geoRestricted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_3_no_derep_geoRestricted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS3, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_3_no_derep_geoRestricted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_3_no_derep_geoRestricted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_3_no_derep_geoRestricted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_3_no_derep_geoRestricted_filt))[, !is.na(tax_table(ps_ITS2_3_no_derep_geoRestricted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_3_no_derep_geoRestricted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db3 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p3_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB3 Georestricted untrained and not dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table3 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+
+#### ITS2_4_derep_geoRestricted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB4, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_4_derep_geoRestricted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_4_derep_geoRestricted/ITS2_4_derep_geoRestricted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_4_derep_geoRestricted <- merge_phyloseq(t(otu_table(ITS2_4_derep_geoRestricted)), tax_table(ITS2_4_derep_geoRestricted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_4_derep_geoRestricted))
+names(sequences) <- taxa_names(ps_ITS2_4_derep_geoRestricted)
+ps_ITS2_4_derep_geoRestricted <- merge_phyloseq(ps_ITS2_4_derep_geoRestricted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_4_derep_geoRestricted) <- paste0("ASV", seq(ntaxa(ps_ITS2_4_derep_geoRestricted)))
+
+```
+
+Clean data
+
+```{r cleanPS4, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_4_derep_geoRestricted <- ps_ITS2_4_derep_geoRestricted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_4_derep_geoRestricted))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_4_derep_geoRestricted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_4_derep_geoRestricted) <- cbind(tax_table(ps_ITS2_4_derep_geoRestricted), 
+    rownames(tax_table(ps_ITS2_4_derep_geoRestricted)), names(sequences))
+colnames(tax_table(ps_ITS2_4_derep_geoRestricted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_4_derep_geoRestricted
+#tax_table(ps_ITS2_4_derep_geoRestricted)[1:3, 1:9]
+
+ps_ITS2_4_derep_geoRestricted_filt <- ps_ITS2_4_derep_geoRestricted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+
+# Add sequencing depth column 
+sample_data(ps_ITS2_4_derep_geoRestricted_filt)$Seq_depth <- sample_sums(ps_ITS2_4_derep_geoRestricted_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_4_derep_geoRestricted_filt) <- sample_data(ps_ITS2_4_derep_geoRestricted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_4_derep_geoRestricted_filt))
+
+head(sample_names(sample_data(ps_ITS2_4_derep_geoRestricted_filt)))
+```
+
+Explore assignment
+
+
+```{r explorePS4, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_4_derep_geoRestricted_filt, is.na(Class)))
+(subset_taxa(ps_ITS2_4_derep_geoRestricted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_4_derep_geoRestricted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS4, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_4_derep_geoRestricted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_4_derep_geoRestricted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_4_derep_geoRestricted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_4_derep_geoRestricted_filt))[, !is.na(tax_table(ps_ITS2_4_derep_geoRestricted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_4_derep_geoRestricted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db4 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p4_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB4 Georestricted untrained and dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table4 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+
+#### ITS2_5_extracted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB5, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_5_extracted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_5_extracted/ITS2_5_extracted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_5_extracted <- merge_phyloseq(t(otu_table(ITS2_5_extracted)), tax_table(ITS2_5_extracted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_5_extracted))
+names(sequences) <- taxa_names(ps_ITS2_5_extracted)
+ps_ITS2_5_extracted <- merge_phyloseq(ps_ITS2_5_extracted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_5_extracted) <- paste0("ASV", seq(ntaxa(ps_ITS2_5_extracted)))
+
+```
+
+Clean data
+
+```{r cleanPS5, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_5_extracted <- ps_ITS2_5_extracted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_5_extracted))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_5_extracted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_5_extracted) <- cbind(tax_table(ps_ITS2_5_extracted), 
+    rownames(tax_table(ps_ITS2_5_extracted)), names(sequences))
+colnames(tax_table(ps_ITS2_5_extracted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_5_extracted
+#tax_table(ps_ITS2_5_extracted)[1:3, 1:9]
+
+ps_ITS2_5_extracted_filt <- ps_ITS2_5_extracted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+# Add sequencing depth column 
+sample_data(ps_ITS2_5_extracted_filt)$Seq_depth <- sample_sums(ps_ITS2_5_extracted_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_5_extracted_filt) <- sample_data(ps_ITS2_5_extracted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_5_extracted_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS5, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_5_extracted_filt, is.na(Class)))
+(subset_taxa(ps_ITS2_5_extracted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_5_extracted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS5, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_5_extracted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_5_extracted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_5_extracted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_5_extracted_filt))[, !is.na(tax_table(ps_ITS2_5_extracted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_5_extracted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db5 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p5_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB5 Georestricted untrained and dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table5 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+
+#### ITS2_6_derep_extracted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB6, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_6_derep_extracted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_6_derep_extracted/ITS2_6_derep_extracted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_6_derep_extracted <- merge_phyloseq(t(otu_table(ITS2_6_derep_extracted)), tax_table(ITS2_6_derep_extracted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_6_derep_extracted))
+names(sequences) <- taxa_names(ps_ITS2_6_derep_extracted)
+ps_ITS2_6_derep_extracted <- merge_phyloseq(ps_ITS2_6_derep_extracted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_6_derep_extracted) <- paste0("ASV", seq(ntaxa(ps_ITS2_6_derep_extracted)))
+
+```
+
+Clean data
+
+```{r cleanPS6, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_6_derep_extracted <- ps_ITS2_6_derep_extracted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_6_derep_extracted))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_6_derep_extracted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_6_derep_extracted) <- cbind(tax_table(ps_ITS2_6_derep_extracted), 
+    rownames(tax_table(ps_ITS2_6_derep_extracted)), names(sequences))
+colnames(tax_table(ps_ITS2_6_derep_extracted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_6_derep_extracted
+#tax_table(ps_ITS2_6_derep_extracted)[1:3, 1:9]
+
+ps_ITS2_6_derep_extracted_filt <- ps_ITS2_6_derep_extracted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+# Add sequencing depth column 
+sample_data(ps_ITS2_6_derep_extracted_filt)$Seq_depth <- sample_sums(ps_ITS2_6_derep_extracted_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_6_derep_extracted_filt) <- sample_data(ps_ITS2_6_derep_extracted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_6_derep_extracted_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS6, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_6_derep_extracted_filt, is.na(Class)))
+(subset_taxa(ps_ITS2_6_derep_extracted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_6_derep_extracted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS6, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_6_derep_extracted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_6_derep_extracted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_6_derep_extracted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_6_derep_extracted_filt))[, !is.na(tax_table(ps_ITS2_6_derep_extracted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_6_derep_extracted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db6 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p6_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB6 Georestricted untrained and dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table6 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+
+#### ITS2_7_geoRestricted_extracted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB7, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_7_geoRestricted_extracted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_7_geoRestricted_extracted/ITS2_7_geoRestricted_extracted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_7_geoRestricted_extracted <- merge_phyloseq(t(otu_table(ITS2_7_geoRestricted_extracted)), tax_table(ITS2_7_geoRestricted_extracted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_7_geoRestricted_extracted))
+names(sequences) <- taxa_names(ps_ITS2_7_geoRestricted_extracted)
+ps_ITS2_7_geoRestricted_extracted <- merge_phyloseq(ps_ITS2_7_geoRestricted_extracted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_7_geoRestricted_extracted) <- paste0("ASV", seq(ntaxa(ps_ITS2_7_geoRestricted_extracted)))
+
+```
+
+Clean data
+
+```{r cleanPS7, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_7_geoRestricted_extracted <- ps_ITS2_7_geoRestricted_extracted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_7_geoRestricted_extracted))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_7_geoRestricted_extracted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_7_geoRestricted_extracted) <- cbind(tax_table(ps_ITS2_7_geoRestricted_extracted), 
+    rownames(tax_table(ps_ITS2_7_geoRestricted_extracted)), names(sequences))
+colnames(tax_table(ps_ITS2_7_geoRestricted_extracted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_7_geoRestricted_extracted
+#tax_table(ps_ITS2_7_geoRestricted_extracted)[1:3, 1:9]
+
+ps_ITS2_7_geoRestricted_extracted_filt <- ps_ITS2_7_geoRestricted_extracted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+# Add sequencing depth column 
+sample_data(ps_ITS2_7_geoRestricted_extracted_filt)$Seq_depth <- sample_sums(ps_ITS2_7_geoRestricted_extracted_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_7_geoRestricted_extracted_filt) <- sample_data(ps_ITS2_7_geoRestricted_extracted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_7_geoRestricted_extracted_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS7, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_7_geoRestricted_extracted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_7_geoRestricted_extracted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS7, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_7_geoRestricted_extracted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_7_geoRestricted_extracted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_7_geoRestricted_extracted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_7_geoRestricted_extracted_filt))[, !is.na(tax_table(ps_ITS2_7_geoRestricted_extracted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_7_geoRestricted_extracted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db7 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p7_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB7 Georestricted trained and not dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table7 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+#### ITS2_8_geoRestricted_derep_extracted
+
+Merge to create phyloseq object 
+
+```{r phyloseqDB8, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ITS2_8_geoRestricted_derep_extracted <- import_biom(BIOMfilename = paste0(outputDir, "/02_AssignTaxonomy/ITS2_8_geoRestricted_derep_extracted/ITS2_8_geoRestricted_derep_extracted.biom"))
+rep_seqs <- Biostrings::readDNAStringSet(paste0(outputDir,"/01_dada2/ITS2-rep-seqs_allRuns.fna"), format = "fasta")
+
+
+ps_ITS2_8_geoRestricted_derep_extracted <- merge_phyloseq(t(otu_table(ITS2_8_geoRestricted_derep_extracted)), tax_table(ITS2_8_geoRestricted_derep_extracted), pollen, rep_seqs)
+
+sequences <- Biostrings::DNAStringSet(taxa_names(ps_ITS2_8_geoRestricted_derep_extracted))
+names(sequences) <- taxa_names(ps_ITS2_8_geoRestricted_derep_extracted)
+ps_ITS2_8_geoRestricted_derep_extracted <- merge_phyloseq(ps_ITS2_8_geoRestricted_derep_extracted, sequences)
+
+#Now we can rename our ASVs to something more convenient in downstream analysis, while automatically retaining the corresponding unique sequence identifier:
+
+taxa_names(ps_ITS2_8_geoRestricted_derep_extracted) <- paste0("ASV", seq(ntaxa(ps_ITS2_8_geoRestricted_derep_extracted)))
+
+```
+
+Clean data
+
+```{r cleanPS8, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# remove test run CIBCM 
+ps_ITS2_8_geoRestricted_derep_extracted <- ps_ITS2_8_geoRestricted_derep_extracted %>% subset_samples(Sequencing_run != "CIBCM") 
+
+tax <- data.frame(tax_table(ps_ITS2_8_geoRestricted_derep_extracted))
+
+tax_clean <- data.frame(row.names = row.names(tax),Kingdom = str_replace(tax[,1], "k__",""),Phylum = str_replace(tax[,2], "p__",""),Class = str_replace(tax[,3], "c__",""),Order = str_replace(tax[,4], "o__",""),Family = str_replace(tax[,5], "f__",""),Genus = str_replace(tax[,6], "g__",""),Species = str_replace(tax[,7], "s__",""),stringsAsFactors = FALSE)
+
+tax_table(ps_ITS2_8_geoRestricted_derep_extracted) <- as.matrix(tax_clean)
+
+# add ASV and ASV_SEQ columns to taxonomy table
+
+tax_table(ps_ITS2_8_geoRestricted_derep_extracted) <- cbind(tax_table(ps_ITS2_8_geoRestricted_derep_extracted), 
+    rownames(tax_table(ps_ITS2_8_geoRestricted_derep_extracted)), names(sequences))
+colnames(tax_table(ps_ITS2_8_geoRestricted_derep_extracted)) <-  c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "ASV_ID", "ASV_SEQ")
+
+#ps_ITS2_8_geoRestricted_derep_extracted
+#tax_table(ps_ITS2_8_geoRestricted_derep_extracted)[1:3, 1:9]
+
+ps_ITS2_8_geoRestricted_derep_extracted_filt <- ps_ITS2_8_geoRestricted_derep_extracted %>%
+  subset_taxa(Kingdom == "Viridiplantae"  & Phylum == "Streptophyta") 
+# Add sequencing depth column 
+sample_data(ps_ITS2_8_geoRestricted_derep_extracted_filt)$Seq_depth <- sample_sums(ps_ITS2_8_geoRestricted_derep_extracted_filt)
+
+# Replace sampleid with Lab_code to match sample names across datasets 
+
+sample_names(ps_ITS2_8_geoRestricted_derep_extracted_filt) <- sample_data(ps_ITS2_8_geoRestricted_derep_extracted_filt)$Lab_code_rep
+
+# Update metadata Fringilla project
+metadata <- data.frame(sample_data(ps_ITS2_8_geoRestricted_derep_extracted_filt))
+
+```
+
+Explore assignment
+
+
+```{r explorePS8, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+(subset_taxa(ps_ITS2_8_geoRestricted_derep_extracted_filt, is.na(Order)))
+(subset_taxa(ps_ITS2_8_geoRestricted_derep_extracted_filt, is.na(Family)))
+
+```
+
+Plot fraction of reads assigned 
+
+```{r plotAssignmentPS8, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=8, fig.height=4, paged.print=FALSE}
+
+tax_table(ps_ITS2_8_geoRestricted_derep_extracted_filt) <- as.matrix(tax_clean)
+
+readsPerSample <- rowSums((otu_table(ps_ITS2_8_geoRestricted_derep_extracted_filt)))
+fractionReadsAssigned <- sapply(colnames(tax_table(ps_ITS2_8_geoRestricted_derep_extracted_filt)), function(x){
+  rowSums((otu_table(ps_ITS2_8_geoRestricted_derep_extracted_filt))[, !is.na(tax_table(ps_ITS2_8_geoRestricted_derep_extracted_filt))[,x]]) / readsPerSample
+})
+
+fractionReadsAssigned <- data.frame(SampleID = rownames(fractionReadsAssigned), fractionReadsAssigned)
+fractionReadsAssigned.L <- pivot_longer(fractionReadsAssigned, 
+    cols = colnames(tax_table(ps_ITS2_8_geoRestricted_derep_extracted_filt)), names_to="taxlevel", values_to="fractionReadsAssigned")
+fractionReadsAssigned.L <- data.frame(fractionReadsAssigned.L, fractionReadsAssigned.L$SampleID)
+
+fractionReadsAssigned.L$taxlevelf = factor(fractionReadsAssigned.L$taxlevel, levels=c("Kingdom","Phylum","Class","Order","Family","Genus","Species"))
+
+assignment_db8 <- fractionReadsAssigned.L
+
+# Boxplot, fraction assigned by SampleType
+
+p8_assign <- ggplot(fractionReadsAssigned.L, aes(y = fractionReadsAssigned, x = taxlevelf)) +  geom_boxplot(color='black', outlier.shape=NA) +  ggtitle("DB8 Georestricted trained and dereplicated ITS2 classifier") + geom_point()+xlab("Taxonomic level")+ ylab("Fraction of reads assigned (%)")
+
+
+Table8 <-  round(tapply(fractionReadsAssigned.L$fractionReadsAssigned,fractionReadsAssigned.L$taxlevelf,median),4)*100
+
+```
+
+### Plot assignment 4 database comparison (UNRESTRICTED NCBI)
+
+```{r plotAssignmentUnrestr, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=15, fig.height=9, paged.print=FALSE}
+
+ggarrange(p1_assign, p2_assign, p3_assign, p4_assign)
+
+```
+
+### Plot assignment 4 database comparison (GEORESTRICTED NCBI)
+
+```{r plotAssignmentGeorest, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=15, fig.height=9, paged.print=FALSE}
+
+ggarrange(p5_assign, p6_assign, p7_assign, p8_assign)
+
+```
+
+### Summary Assignment
+
+```{r summaryTable, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=15, fig.height=9, paged.print=FALSE}
+
+table_all <- cbind(Table1, Table2, Table3, Table4, Table5, Table6, Table7, Table8)
+table_all
+
+write.csv(table_all, paste0(dataDir, "/assignment__median_all_NCBI_local.csv"))
+
+
+assignment_db1$database <- paste0("DB1_NoDerep_NotGeoRestricted_NotPrimerTrimmed")
+assignment_db2$database <- paste0("DB2_Derep_NotGeoRestricted_NotPrimerTrimmed")
+assignment_db3$database <- paste0("DB3_NoDerep_GeoRestricted_NotPrimerTrimmed")
+assignment_db4$database <- paste0("DB4_Derep_GeoRestricted_NotPrimerTrimmed")
+assignment_db5$database <- paste0("DB5_NoDerep_NotGeoRestricted_PrimerTrimmed")
+assignment_db6$database <- paste0("DB6_Derep_NotGeoRestricted_PrimerTrimmed")
+assignment_db7$database <- paste0("DB7_NoDerep_GeoRestricted_PrimerTrimmed")
+assignment_db8$database <- paste0("DB8_Derep_GeoRestricted_PrimerTrimmed")
+
+assignment_all <- rbind(assignment_db1, assignment_db2, assignment_db3, assignment_db4, assignment_db5, assignment_db6, assignment_db7, assignment_db8)
+
+assignment_all <- assignment_all %>% dplyr::select(SampleID, taxlevel, fractionReadsAssigned, database)
+
+write.csv(assignment_all, paste0(dataDir, "/assignment_all_NCBI_local.csv"), row.names = FALSE)
+
+```
+
+# More exploration
+
+## Sequencing depth and number of ASVs
+```{r moreExploration, message=FALSE, warning=FALSE, tidy=TRUE,  fig.width=10, fig.height=4, paged.print=FALSE}
+
+# Seq depth per run
+ps_clean <- ps_ITS2_4_derep_geoRestricted_filt
+
+ps_explore <- ps_clean
+
+ps_explore <- subset_samples(ps_clean, Lab_code_rep
+!= "CONTROL" & !is.na(Fruitcrop) & Rep_ID == 1)
+
+df <- ps_explore %>% sample_data  %>% as.data.frame
+
+asv_df <- ps_explore  %>% t %>% otu_table
+ASV_number <- colSums(asv_df != 0)
+
+df$ASV_number <- ASV_number
+names(df)
+
+p_run <-  ggplot(df) +
+  geom_boxplot(aes(x = Fruitcrop, y = Seq_depth, fill = Fruitcrop)) +
+  crop_transect_fill +
+  ylab('Sequencing depth') +
+  scale_y_log10() + 
+  theme_linedraw() + theme(panel.grid = element_line(colour = 'darkgrey'), legend.position = "none")
+
+# ASV number per species
+
+p_ASVs <- ggplot(df) +
+  geom_boxplot(aes(x = Fruitcrop, y = ASV_number, fill = Fruitcrop)) +
+  crop_transect_fill +
+  ylab('Observed ASVs') +
+    scale_y_log10() + 
+  theme_linedraw() + theme(panel.grid = element_line(colour = 'darkgrey'), legend.position = "none")
+
+ggarrange(p_run, p_ASVs)
+```
+
+
+## Most abundant and prevalent ASVs
+
+```{r topASVs, message=FALSE, warning=FALSE, tidy=TRUE, tidy.echo=FALSE, fig.height=8, fig.width=9, fig.align="center"}
+
+prevalenceDF <- data.frame(Prevalence = colSums(otu_table(ps_explore) > 0 ),         TotalAbundance = colSums(otu_table(ps_explore)),        tax_table(ps_explore))
+
+prevalenceDF <- prevalenceDF %>% filter(Prevalence != 0)
+nrow(prevalenceDF)
+
+idxAbundance = order(prevalenceDF$TotalAbundance, decreasing=T)
+idxPrevalence = order(prevalenceDF$Prevalence, decreasing=T)
+
+head(prevalenceDF)
+
+kable(prevalenceDF[idxAbundance, ][1:25, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+kable(prevalenceDF[idxPrevalence, ][1:25, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+# Most abundant ASVs
+
+top_50_abund <- as.data.frame(prevalenceDF[idxAbundance, ][1:50, ])
+top_50_prev <- as.data.frame(prevalenceDF[idxPrevalence, ][1:50, ])
+
+write.csv(prevalenceDF, paste0(outputDir, "/03_Exploration/ps_explore_DB4_prevalence.csv"))
+
+```
+
+
+## Explore taxonomy control and replicates
+
+```{r exploreCtrRep, message=FALSE, warning=FALSE, tidy=TRUE, tidy.echo=FALSE, fig.height=8, fig.width=9, fig.align="center"}
+
+ps_explore_control <- subset_samples(ps_clean, Lab_code_rep
+== "CONTROL")
+
+prevalenceDF_control <- data.frame(Prevalence = colSums(otu_table(ps_explore_control) > 0 ), TotalAbundance = colSums(otu_table(ps_explore_control)), tax_table(ps_explore_control))
+
+prevalenceDF_control <- prevalenceDF_control %>% filter(Prevalence != 0)
+
+nrow(prevalenceDF_control)
+
+idxAbundance = order(prevalenceDF_control$TotalAbundance, decreasing=T)
+
+kable(prevalenceDF_control[idxAbundance, ])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+write.csv(prevalenceDF_control, paste0(outputDir, "/03_Exploration/tax_control.csv"))
+
+ps_explore <- subset_samples(ps_clean, Lab_code_rep
+!= "CONTROL" & !is.na(Fruitcrop) & Rep_ID == 1)
+
+ps_explore_replicates <- subset_samples(ps_clean, Lab_code_rep
+!= "CONTROL" & Rep == "Yes")
+
+prevalenceDF_replicates <- data.frame(Prevalence = colSums(otu_table(ps_explore_replicates) > 0 ), TotalAbundance = colSums(otu_table(ps_explore_replicates)), tax_table(ps_explore_replicates))
+
+prevalenceDF_replicates <- prevalenceDF_replicates %>% filter(Prevalence != 0)
+
+nrow(prevalenceDF_replicates)
+
+idxAbundance = order(prevalenceDF_replicates$TotalAbundance, decreasing=T)
+
+kable(prevalenceDF_replicates[idxAbundance, ][1:25,])  %>% 
+  kable_styling("striped", full_width = F) %>%   row_spec(0, angle = 0)
+
+write.csv(prevalenceDF_replicates, paste0(outputDir, "/03_Exploration/tax_replicates.csv"))
+```
+
+
+
+Barplot relative abundance 
+
+```{r plotRelAbundPS2, message=FALSE, warning=FALSE, tidy=TRUE, fig.width=15, fig.height=8,  paged.print=FALSE, eval = TRUE}
+
+# replace NA with the higher level taxonomic assignment 
+
+tax_clean[is.na(tax_clean)] <- "NA"
+
+for (i in 1:nrow(tax_clean)){
+    if (tax_clean[i,2] == "NA"){
+    kingdom <- paste("Kingdom_", tax_clean[i,1], sep = "")
+    tax_clean[i, 2:7] <- kingdom
+    } else if (tax_clean[i,3] == "NA"){
+    phylum <- paste("Phylum_", tax_clean[i,2], sep = "")
+    tax_clean[i, 3:7] <- phylum
+    } else if (tax_clean[i,4] == "NA"){
+    class <- paste("Class_", tax_clean[i,3], sep = "")
+    tax_clean[i, 4:7] <- class
+    } else if (tax_clean[i,5] == "NA"){
+    order <- paste("Order_", tax_clean[i,4], sep = "")
+    tax_clean[i, 5:7] <- order
+    } else if (tax_clean[i,6] == "NA"){
+    family <- paste("Family_", tax_clean[i,5], sep = "")
+    tax_clean[i, 6:7] <- family
+    } else if ((tax_clean[i,7] == "NA")){
+    tax_clean$Species[i] <- paste("Genus_", tax_clean[i,5], sep = "")
+} else if (tax_clean[i,7] == "NA"){
+}
+}
+
+ps_4 <- ps_ITS2_4_derep_geoRestricted_filt
+tax_table(ps_4) <- as.matrix(tax_clean)
+
+ps_4 <- phyloseq::transform_sample_counts(ps_ITS2_4_derep_geoRestricted_filt, function(x) x / sum(x) )
+ps_4
+
+# filter out test samples and control
+ps_4 <- subset_samples(ps_4, Rep_ID == 1 & Lab_code_rep != "CONTROL")
+
+ps_4
+
+ps_melt<- psmelt(ps_4)
+ps_melt$Order[ps_melt$Abundance < 0.01] <- "< 1% abund."
+ps_melt$Family[ps_melt$Abundance < 0.01] <- "< 1% abund."
+ps_melt$Genus[ps_melt$Abundance < 0.05] <- "< 5% abund."
+
+colors <- c("grey90","darkblue", "#5b5b5b", "darkorchid", "lightskyblue", "darkgreen", "#4a3b2c", "deeppink", "khaki2","#aa6c39", "darkorange1", "#E0FFFF", "darksalmon", "#eee7e1", "black", "darkolivegreen1","pink","darkseagreen","#E41A1C","#0000FF","#00FF00","#FFA500","#E7298A","#00FFFF","#008000","#999999","#800080","#008080","#FF4500","#FFFF00","#4DAF4A","#A65628","#F781BF","#1B9E77","#808000","#377EB8", "#CBC3E3","#460046","#AA336A","#d2691e", "cornflowerblue", "gold", "brown", "#324456")
+
+
+p4_family <- ggplot(data = ps_melt, aes(x = Lab_code_rep, y = Abundance, fill = Family))
+
+(p4_family <-p4_family + 
+  geom_bar(aes(), stat = "identity", position = "stack") +
+  scale_fill_manual(values  =  colors) +
+ # guides(fill = guide_legend(title = "Taxonomic assignment \n (Family or higher)")) +
+ guides(fill = guide_legend(title = "")) +
+  theme(legend.position="bottom",axis.text.x = element_text(angle = 45, hjust = 1, size = 8),panel.background = element_blank(),plot.margin = unit(c(1,1,1,1), "cm")) +
+  ggtitle("Relative abundance of ITS2 ASVs on pollen samples San Gerardo de Dota")+
+  xlab("")
+  #+ 
+  #facet_grid(rows = "sample_Family")
+  )
+
+p4_genus <- ggplot(data = ps_melt, aes(x = Lab_code_rep, y = Abundance, fill = Genus))
+
+(p4_genus <-p4_genus + 
+  geom_bar(aes(), stat = "identity", position = "stack") +
+  scale_fill_manual(values  =  colors) +
+ # guides(fill = guide_legend(title = "Taxonomic assignment \n (Genus or higher)")) +
+   guides(fill = guide_legend(title = "")) +
+  theme(legend.position="bottom",axis.text.x = element_text(angle = 45, hjust = 1, size = 8),panel.background = element_blank(),plot.margin = unit(c(1,1,1,1), "cm")) +
+  ggtitle("Relative abundance of ITS2 ASVs on pollen samples San Gerardo de Dota")+
+  xlab(""))
+
+```
+ 
+
+Save phyloseq object, sequence and taxonomy tables of DB2
+
+```{r saveFilesDerep, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+# save phyloseq object 
+
+ps_ITS2_4_derep_geoRestricted_filt <- ps_ITS2_4_derep_geoRestricted_filt %>%
+    subset_taxa(!is.na(Genus)) %>% subset_samples(!is.na(Fruitcrop) & Rep_ID == 1 & !is.na(Order))
+    
+saveRDS(ps_ITS2_4_derep_geoRestricted_filt, paste0(dataDir, "/ps_ITS2_DB4_derep_geoRestricted.rds"))
+
+# get asvs/otus
+asv_tab <- as.data.frame(abundances(ps_ITS2_4_derep_geoRestricted_filt)) 
+
+# add a new column for ids
+asv_tab$asv_id <- rownames(asv_tab) 
+
+# get taxonomy
+tax_tab <- as.data.frame(tax_table(ps_ITS2_4_derep_geoRestricted_filt)) 
+head(tax_tab)
+
+# add a new column for ids
+tax_tab$asv_id <- rownames(tax_tab)
+
+# join to get taxonomy and asv table
+asv_tax_tab <- tax_tab %>% 
+  right_join(asv_tab, by="asv_id") 
+
+# get metadata 
+metadata <- data.frame(sample_data(ps_ITS2_4_derep_geoRestricted_filt))
+str(metadata)
+
+# save the data to user specified path 
+write.table(asv_tax_tab,
+            paste0(dataDir, "/ps_ITS2_DB4_asv_tax_tab.txt"), 
+            sep="\t", quote = FALSE, row.names = F)
+
+#  sequence and taxonomy tables 
+write.table(tax_table(ps_ITS2_4_derep_geoRestricted_filt),
+            paste0(dataDir, "/ps_ITS2_DB4_tax_tab.txt"), 
+            sep="\t", quote = FALSE, col.names=NA)
+write.table(t(otu_table(ps_ITS2_4_derep_geoRestricted_filt)),
+            paste0(dataDir, "/ps_ITS2_DB4_asv_tab.txt"),
+            sep="\t", quote = FALSE, col.names=NA)
+write.table(metadata,
+            paste0(dataDir, "/ps_ITS2_DB4_metadata.txt"),
+            sep="\t", quote = FALSE, col.names=NA)
+```
+
+
+Fasta file for all ASVs in the filtered data set
+
+```{r FastaFile, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, eval = FALSE}
+
+# Create fasta file from tax_table
+table2format <- tax_table(ps_ITS2_4_derep_geoRestricted_filt)
+head(table2format)
+
+#retain only the column with the sequences
+table2format_trim <- table2format[, 9]
+table2format_trim_df <- data.frame(row.names(table2format_trim),                               table2format_trim)
+
+colnames(table2format_trim_df) <- c("ASV_ID", "ASV_SEQ")
+#format fasta
+table2format_trim_df$ASV_ID <- sub("ASV", ">ASV", table2format_trim_df$ASV_ID)
+
+write.table(table2format_trim_df, 
+            paste0(dataDir, "/ITS2_DB4.fasta"),
+            sep = "\r", col.names = FALSE, row.names = FALSE,
+            quote = FALSE, fileEncoding = "UTF-8")
+```
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```

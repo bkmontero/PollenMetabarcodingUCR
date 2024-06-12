@@ -1,0 +1,94 @@
+---
+title: 'Primer trained database using CRABS'
+author: "B. Karina Montero"
+date: "`r Sys.Date()`"
+#output: pdf_document
+output: html_document
+---
+
+
+B. Karina Montero
+Generate primer trained database using the CRABS modules: https://github.com/gjeunen/reference_database_creator
+
+https://onlinelibrary.wiley.com/doi/full/10.1111/1755-0998.13741?campaign=woletoc
+
+
+## 1. LOAD CRABS AND SPECIFY PATHS
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+conda activate CRABS
+
+cd /home/kari/Dropbox/PollenUCR/01_scripts/RefDB/DB_update
+
+
+ ```
+
+
+## 2. EXTRACT AMPLICON SEQUENCES OF THE PRIMER
+
+
+#### 2.1 In-silico PCR
+CRABS extracts the amplicon region of the primer set by conducting an in silico PCR. CRABS uses CUTADAPT and VSEARCH for this process to increase speed of execution over traditional python code. Input and output file names can be specified using the '--input' and '--output' parameters, respectively. Both the forward and reverse primer should be provided in 5'-3' direction using the '--fwd' and '--rev' parameters, respectively. CRABS will reverse complement the reverse primer. The in silico PCR will be executed twice. During the first iteration, amplicon regions will be retained if both forward and reverse primers are found in the sequence. Then, all sequences will be reverse complemented for which primers were not found and a second in silico PCR will be executed. This is to ensure sequences are incorporated into the final output when deposited in the opposite direction in the online repository. The maximum allowed number of errors found in the primer sequences can be specified using the '--error' parameter, with a default setting of 4.5.
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+#DB1_no_derep
+crabs insilico_pcr --input DB_NCBI_Paramo_merge_km_2023_11_20.fasta --output DB_NCBI_Paramo_merge_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB2_derep
+crabs insilico_pcr --input DB_NCBI_Paramo_merge_derep_km_2023_11_20.fasta --output DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB3_geoRestricted_no_derep
+crabs insilico_pcr --input DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20.fasta --output DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB4_geoRestricted_derep
+crabs insilico_pcr --input DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20.fasta --output DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB9_no_derep_without_local
+crabs insilico_pcr --input NCBI_ITS2_Viridiplantae_2023_03_16_clean.fasta --output NCBI_ITS2_Viridiplantae_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB10_derep_without_local
+crabs insilico_pcr --input NCBI_ITS2_Viridiplantae_2023_03_16_derep_clean.fasta --output NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB11_no_derep_geoRestricted_without_local
+crabs insilico_pcr --input NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta --output NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+#DB12_derep__geoRestricted_without_local
+crabs insilico_pcr --input NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.fasta --output NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --error 4.5
+
+ ```
+
+#### 2.2 pga
+
+It is common practice to remove primer-binding regions from reference sequences when deposited in an online database. Therefore, when the reference sequence was generated using the same forward and/or reverse primer as searched for in the insilico_pcr function, the insilico_pcr function will have failed to recover the amplicon region of the reference sequence. To account for this possibility, CRABS has the option to run a Pairwise Global Alignment, implemented from VSEARCH, to extract amplicon regions for which the reference sequence does not contain the full forward and reverse primer-binding regions. To accomplish this, the pga function takes in the originally downloaded database file using the '--input' parameter. The database to be searched against is the output file from the in silico PCR and can be specified using the '--database' parameter. The output file can be specified using the '--output' parameter. The primer sequences, only used to calculate basepair length, can be set with the '--fwd' and '--rev' parameters. As the pga function can take a long time for large databases, sequence length can be restricted to speed up the process using the '--speed' parameter. Minimum percentage identity and query coverage can be specified using the '--percid' and '--coverage' parameters, respectively. Finally, the pga function can be restricted to retain sequences where primer sequences are not fully present in the reference sequence (alignment starting or ending within the length of the forward or reverse primer) using the '--filter_method strict' parameter. When '--filter_method relaxed' is used, positive hits will be included when the alignment is found outside the range of the primer-binding regions (missed by insilico_pcr function due to too many mismatches in the primer-binding region).
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+#DB1_no_derep
+crabs pga  --input DB_NCBI_Paramo_merge_km_2023_11_20.fasta --output DB_NCBI_Paramo_merge_km_2023_11_20_extract_pga.fasta --database DB_NCBI_Paramo_merge_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB2_derep
+crabs pga  --input DB_NCBI_Paramo_merge_derep_km_2023_11_20.fasta  --output DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_pga.fasta --database DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB3_geoRestricted_no_derep
+crabs pga  --input DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20.fasta --output DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_pga.fasta --database DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB4_geoRestricted_derep
+crabs pga  --input DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20.fasta --output DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_pga.fasta --database DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB9_no_derep_without_local
+crabs pga  --input NCBI_ITS2_Viridiplantae_2023_03_16_clean.fasta --output  NCBI_ITS2_Viridiplantae_2023_11_20_extract_pga.fasta --database NCBI_ITS2_Viridiplantae_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB10_derep_without_local
+crabs pga  --input NCBI_ITS2_Viridiplantae_2023_03_16_derep_clean.fasta --output  NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_pga.fasta --database NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB11_no_derep_geoRestricted_without_local
+crabs pga  --input NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta --output  NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_pga.fasta --database NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+#DB12_derep__geoRestricted_without_local
+crabs pga  --input NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.fasta --output  NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_pga.fasta --database NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_insilico.fasta --fwd YGACTCTCGGCAACGGATA --rev CCGCTTAKTGATATGCTTAAA --speed medium --percid 0.95 --coverage 0.95 --filter_method strict
+
+
+ ```

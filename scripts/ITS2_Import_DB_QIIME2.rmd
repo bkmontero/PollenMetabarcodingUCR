@@ -1,0 +1,277 @@
+---
+title: 'Import Reference Database into QIIME2'
+author: "B. Karina Montero"
+date: "`r Sys.Date()`"
+#output: pdf_document
+output: html_document
+---
+
+B. Karina Montero
+
+
+## 1. LOAD CRABS AND SPECIFY PATHS
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+conda activate qiime2-2023.2
+
+cd /home/kari/Dropbox/PollenUCR/01_scripts/RefDB/DB_update
+
+
+ ```
+
+
+### 2. IMPORT DATA INTO QIIME2
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+#DB1_no_derep
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_merge_km_2023_11_20.fasta \
+  --output-path DB_NCBI_Paramo_merge_km_2023_11_20.fasta.qza
+
+ qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_Paramo_taxonomic_lineages_2023_11_20.tsv \
+  --output-path NCBI_Paramo_taxonomic_lineages_2023_11_20.qza
+
+#DB2_derep
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_merge_derep_km_2023_11_20.fasta \
+  --output-path DB_NCBI_Paramo_merge_derep_km_2023_11_20.fasta.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_Paramo_taxonomic_lineages_derep_2023_11_20.tsv \
+  --output-path NCBI_Paramo_taxonomic_lineages_derep_2023_11_20.qza
+
+#DB3_geoRestricted_no_derep
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20.fasta \
+  --output-path DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20.fasta.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path DB_NCBI_Paramo_geoRestricted_taxonomic_lineages_2023_11_20.tsv \
+  --output-path DB_NCBI_Paramo_geoRestricted_taxonomic_lineages_2023_11_20.qza
+
+#DB4_geoRestricted_derep
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20.fasta \
+  --output-path DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20.fasta.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path DB_NCBI_Paramo_geoRestricted_derep_taxonomic_lineages_2023_11_20.tsv \
+  --output-path DB_NCBI_Paramo_geoRestricted_derep_taxonomic_lineages_2023_11_20.qza
+
+#DB5_no_derep_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_merge_km_2023_11_20_extract_pga.fasta \
+  --output-path DB_NCBI_Paramo_merge_km_2023_11_20_extract_pga.fasta.qza
+
+#DB6_derep_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_pga.fasta \
+  --output-path DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_pga.fasta.qza
+
+#DB7_geoRestricted_no_derep_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_pga.fasta \
+  --output-path DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_pga.fasta.qza
+
+#DB8_geoRestricted_derep_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_pga.fasta \
+  --output-path DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_pga.fasta.qza
+
+#DB9_no_derep_without_local
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_2023_03_16_clean.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_2023_03_16_clean.fasta.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09.tsv \
+  --output-path NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09.qza
+
+#DB10_derep_without_local
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_2023_03_16_derep_clean.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_2023_03_16_derep_clean.fasta.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09_derep.tsv \
+  --output-path NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09_derep.qza
+
+#DB11_no_derep_geoRestricted_without_local
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta.qza
+
+#DB12_derep__geoRestricted_without_local
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.fasta.qza
+
+#DB13_no_derep_without_local_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_2023_11_20_extract_pga.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_2023_11_20_extract_pga.fasta.qza
+
+#DB14_derep_without_local_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_pga.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_pga.fasta.qza
+
+#DB15_no_derep_geoRestricted_without_local_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_pga.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_pga.fasta.qza
+
+#DB16_derep_geoRestricted_without_local_extract
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_pga.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_pga.fasta.qza
+
+```
+
+
+These two files can be directly used in QIIME2 as reference files to assign taxonomy to query sequences using the BLAST+ consensus classifier or the VSEARCH-based consensus classifier.
+
+If the sklearn-based Naive Bayes approach is preferred to assign taxonomy, the classifier must be pre-trained:
+
+Big Job, send to CESGA
+
+## Copy files to cesga
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+#DB1_no_derep
+rsync -ravzhP -v DB_NCBI_Paramo_merge_km_2023_11_20.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v NCBI_Paramo_taxonomic_lineages_2023_11_20.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB2_derep
+rsync -ravzhP -v DB_NCBI_Paramo_merge_derep_km_2023_11_20.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v NCBI_Paramo_taxonomic_lineages_derep_2023_11_20.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB3_geoRestricted_no_derep
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_taxonomic_lineages_2023_11_20.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB4_geoRestricted_derep
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_derep_taxonomic_lineages_2023_11_20.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB5_no_derep_extract
+rsync -ravzhP -v DB_NCBI_Paramo_merge_km_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB6_derep_extract
+rsync -ravzhP -v DB_NCBI_Paramo_merge_derep_km_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB7_geoRestricted_no_derep_extract
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_merge_km_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB8_geoRestricted_no_derep_extract
+rsync -ravzhP -v DB_NCBI_Paramo_geoRestricted_merge_derep_km_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+
+#DB9_no_derep_without_local
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_2023_03_16_clean.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB10_derep_without_local
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_2023_03_16_derep_clean.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_taxonomic_lineages_2023_03_09_derep.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB11_no_derep_geoRestricted_without_local
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB12_derep__geoRestricted_without_local
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB13_no_derep_without_local_extract
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB14_derep_without_local_extract
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_derep_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB15_no_derep_geoRestricted_without_local_extract
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_geoRestricted_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+#DB16_derep_geoRestricted_without_local_extract
+rsync -ravzhP -v NCBI_ITS2_Viridiplantae_geoRestricted_derep_2023_11_20_extract_pga.fasta.qza csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/TEMP
+
+
+```
+
+## Pre-train classifiers
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+# depending on the size of the reference database this can be done locally. Takes between 5min to 3.5 hours to run in the cluster 
+
+sbatch classifier_ITS2_1_no_derep.sh
+# Run time 
+sbatch classifier_ITS2_2_derep.sh
+# Run time 
+sbatch classifier_ITS2_3_geoRestricted.sh
+# Run time 
+sbatch classifier_ITS2_4_geoRestricted_derep.sh
+# Run time 
+sbatch classifier_ITS2_5_extracted.sh
+# Run time 
+sbatch classifier_ITS2_6_derep_extracted.sh
+# Run time 
+sbatch classifier_ITS2_7_geoRestricted_extracted.sh
+# Run time 
+sbatch classifier_ITS2_8_geoRestricted_derep_extracted.sh
+
+sbatch classifier_ITS2_9_no_derep.sh
+# Run time 
+sbatch classifier_ITS2_10_derep.sh
+# Run time 
+sbatch classifier_ITS2_11_geoRestricted.sh
+# Run time 
+sbatch classifier_ITS2_12_geoRestricted_derep.sh
+# Run time 
+sbatch classifier_ITS2_13_extracted.sh
+# Run time 
+sbatch classifier_ITS2_14_derep_extracted.sh
+# Run time 
+sbatch classifier_ITS2_15_geoRestricted_extracted.sh
+# Run time 
+sbatch classifier_ITS2_16_geoRestricted_derep_extracted.sh
+
+```

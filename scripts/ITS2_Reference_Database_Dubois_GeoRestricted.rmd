@@ -1,0 +1,1115 @@
+---
+title: 'ITS2 Reference Database'
+author: "B. Karina Montero"
+date: "`r Sys.Date()`"
+#output: pdf_document
+output: html_document
+---
+
+# Pollination networks: ITS2 Reference Database
+
+Database generated following all the steps from Dubois et al : https://figshare.com/articles/online_resource/QIIME2_RefDB_development_zip/17040680
+
+Dubois, Benjamin (2022): QIIME2_RefDB_development.zip. figshare. Online resource. https://doi.org/10.6084/m9.figshare.17040680.v3
+
+
+## 1. RETRIEVE SEQUENCES FROM NCBI
+
+Search plant sequences on the NCBI website using the Entrez text querey
+
+All available plant ITS2 sequences were searched on the NCBI website on 3rd March 2023 using the following Entrez text query:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+ ((viridiplantae[Organism] AND its2) AND 100:10000000[Sequence Length]) NOT (uncultured OR environmental sample OR incertae sedis OR unverified)
+
+ ((Hypochaeris[Organism] AND its2) AND 100:10000000[Sequence Length]) NOT (uncultured OR environmental sample OR incertae sedis OR unverified)
+grep -c ">" NCBI_Viridiplantae_ITS2.fasta
+#246428
+
+
+```
+
+Geographically restricted to Mexico - Brazil
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+((viridiplantae[Organism] AND its2) AND 100:10000000[Sequence Length] AND Costa Rica) NOT (uncultured OR environmental sample OR incertae sedis OR unverified) 
+
+grep -c ">" NCBI_Viridiplantae_ITS2_CostaRica.fasta
+# 611 
+
+((viridiplantae[Organism] AND its2) AND 100:10000000[Sequence Length] AND (Mexico OR Guatemala OR Belize OR El Salvador OR Belize OR Honduras OR Nicaragua OR Costa Rica OR Panama OR Cuba OR Jamaica OR Haiti OR Dominican Republic OR Caribbean OR Puerto Rico OR Colombia OR Venezuela OR Guyana OR Suriname OR French Guyana OR Ecuador OR Peru OR Brazil OR Bolivia OR Paraguay)) NOT (uncultured OR environmental sample OR incertae sedis OR unverified) 
+
+
+```
+
+NCBI nucleotide sequences downloaded in FASTA format display linebreaks every 70 bases. Since such structure may hinder further sequence processing steps, these linebreaks were removed :
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" }END { printf "%s", n }' NCBI_Viridiplantae_ITS2_GeoRestricted > NCBI_Viridiplantae_ITS2_GeoRestricted_tmp
+
+mv NCBI_Viridiplantae_ITS2_GeoRestricted_tmp NCBI_Viridiplantae_ITS2_GeoRestricted
+
+```
+
+# 2. GETTING TAXONOMIC IDENTIFIER (taxid) FOR EACH ACCESSION NUMBER
+
+The objective here is to collect the taxonomic identifiers (taxids) of the organisms from which ITS2 sequences were obtained.
+
+The first step is to create a table linking every accession number to the corresponding nucleotide sequence:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+grep ">" NCBI_Viridiplantae_ITS2_GeoRestricted | cut -d ">" -f 2 | cut -d " " -f 1 > AccessionNumbers
+
+paste \
+  <(cat AccessionNumbers) \
+  <(sed '/^>/d' NCBI_Viridiplantae_ITS2_GeoRestricted) > AccessionNumbers_seqs_linking_table
+
+```
+
+The “nucl_gb.accession2taxid” NCBI reference file must then be downloaded from their FTP website (NB: large 2 Gb file to download and 10 Gb after decompression):
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+wget ftp://ftp.ncbi.nih.gov/pub/taxonomy/accession2taxid/nucl_gb.accession2taxid.gz
+
+gzip -d nucl_gb.accession2taxid.gz
+
+```
+
+Retrieving lines in the nucl_gb.accession2taxid file corresponding to the accession numbers:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+fgrep -w -f AccessionNumbers nucl_gb.accession2taxid > AccessionNumbers_taxids_linking_table
+
+```
+
+NB: Searching for so many accession numbers in such a large file can be resource intensive and take a long time. The fgrep command has shown to be particularly efficient compared to other lookup commands.
+
+
+Checking that taxids have been retrieved for all accession numbers:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+wc -l AccessionNumbers_taxids_linking_table 
+
+# 18134 => ok 
+
+```
+
+If the result of the previous command equals the number of sequences in the dataset (like in this case):
+
+It means that every taxid has been retrieved. Hence, the user can run the following command to keep only columns corresponding to accession numbers and taxids:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'BEGIN {FS=OFS="\t"} {print $2,$3}' AccessionNumbers_taxids_linking_table > AccessionNumbers_taxids_linking_table_final
+
+```
+
+Optional clean-up of temporary files that are no longer useful:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+rm AccessionNumbers
+rm AccessionNumbers_taxids_linking_table
+
+```
+
+
+
+# 3. GETTING TAXONOMIC LINEAGES FOR EACH taxid
+
+The first step is to extract a list of unique taxids from the accession numbers/taxids linking table:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk -F '\t' '{print $2}' AccessionNumbers_taxids_linking_table_final | sort | uniq > Taxids_uniq
+wc -l Taxids_uniq 
+
+```
+
+### Collecting taxonomic lineages for these taxids
+#### Retrieving the reference file linking taxids to taxonomic lineages
+
+The “new_taxdump.tar.gz” NCBI reference file must be downloaded from their FTP website:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+mkdir taxdump
+
+wget https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz
+mv new_taxdump.tar.gz taxdump/
+
+tar -xvzf taxdump/new_taxdump.tar.gz -C taxdump
+
+```
+
+The rankedlineage.dmp file can then be reformatted with a simpler field separator (pipe):
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+sed -i "s/\t//g" taxdump/rankedlineage.dmp
+
+
+```
+
+#### Linking unique taxids from our dataset to their corresponding taxonomic lineages
+
+The rankedlineage.dmp file must first be sorted using the taxids column field:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+sort -t "|" -k 1b,1 taxdump/rankedlineage.dmp > taxdump/rankedlineage_sorted
+
+```
+
+Taxids can then be associated with their corresponding taxonomic lineages:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+join -t "|" -1 1 -2 1 -a 1 Taxids_uniq taxdump/rankedlineage_sorted > Taxids_taxonomic_lineages_linking_table
+
+wc -l Taxids_taxonomic_lineages_linking_table
+#85908
+
+```
+
+Checking that there is no empty line in the second column:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk -F '|' '{print $2}' Taxids_taxonomic_lineages_linking_table | grep -c '^$'       
+
+# 2
+
+
+```
+
+If the result of the previous command is > 0:
+
+Some taxonomic lineages are missing and the user must therefore follow the next steps to recover them:
+
+
+Retrieving missing taxonomic lineages from NCBI
+
+Building an API query with all missing taxids and downloading the results as an xml file
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk -F '|' '$2=="" {print $0}' Taxids_taxonomic_lineages_linking_table > Taxids_not_found
+
+url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=taxonomy&rettype=xml&id="
+url+=$(paste -s -d "," Taxids_not_found)
+
+curl $url > Taxids_not_found.xml
+
+```
+
+Extracting the nodes of interest to retrieve missing taxonomic lineages
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+paste \
+ <(cat Taxids_not_found) \
+ <(paste -d "," \
+   <(xmllint --xpath "//TaxaSet/Taxon/TaxId/node()" Taxids_not_found.xml) \
+   <(xmllint --xpath "//TaxaSet/Taxon/ScientificName/node()" Taxids_not_found.xml) \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='kingdom']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g") \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='phylum']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g") \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='class']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g") \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='order']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g") \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='family']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g") \
+   <(for i in $(cat Taxids_not_found);do paste -d "" <(echo "ZZ") <(xmllint --xpath "//TaxaSet/Taxon[./TaxId='$i']/LineageEx/Taxon[./Rank='genus']/ScientificName/node()" Taxids_not_found.xml);done | sed "s/ZZ//g")) > Missing_taxonomic_lineages
+
+```
+The “ZZ” pasting and further removal is a trick to force the addition of an empty field if the xmllint command does not find a node.
+
+
+#### Reformatting both tables
+
+The main taxids/taxonomic lineages file can then be reformatted to match QIIME2 formatting requirements:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+paste \
+  <(awk -F "|" '$2!="" {print $1}' Taxids_taxonomic_lineages_linking_table) \
+  <(awk -F "|" 'BEGIN {OFS=""} $2!="" {print "k__",$9,"; p__",$8,"; c__",$7,"; o__",$6,"; f__",$5,"; g__",$4,"; s__",$2}' Taxids_taxonomic_lineages_linking_table) > Taxids_taxonomic_lineages_linking_table_reformatted
+
+```
+
+…just like the one corresponding to missing taxonomic lineages:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+paste \
+  <(awk -F '\t' '{print $1}' Missing_taxonomic_lineages) \
+  <(awk -F '\t' '{print $2}' Missing_taxonomic_lineages | awk -F ',' 'BEGIN {OFS=""} {print "k__",$3,"; p__",$4,"; c__",$5,"; o__",$6,"; f__",$7,"; g__",$8,"; s__",$2}') > Missing_taxonomic_lineages_reformatted
+
+```
+
+#### Merging both files
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+cat Taxids_taxonomic_lineages_linking_table_reformatted Missing_taxonomic_lineages_reformatted > Taxids_taxonomic_lineages_linking_table_merged
+
+```
+
+Removing genus names in species-rank annotations to match the structure of sequence data obtained via the RESCRIPt get-ncbi-data method:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+paste -d "" \
+  <(awk -F 's__' '{OFS=""} {print $1,"s__"}' Taxids_taxonomic_lineages_linking_table_merged) \
+  <(awk -F 's__' '{print $2}' Taxids_taxonomic_lineages_linking_table_merged | cut -d " " -f 2-) > Taxids_taxonomic_lineages_linking_table_final
+
+```
+
+# 4. CREATING A GLOBAL TABLE GATHERING ACCESSION NUMBERS, TAXIDS, TAXONOMIC LINEAGES AND NUCLEOTIDE SEQUENCES
+
+#### Linking every accession number to its corresponding taxonomic lineage
+
+Joining both tables and generating a re-ordered 3-columns tsv file:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+join -t $'\t' -1 2 -2 1 -a 1 \
+    <(sort -t $'\t' -n -k 2 AccessionNumbers_taxids_linking_table_final) \
+    <(sort -t $'\t' -n -k 1 Taxids_taxonomic_lineages_linking_table_final) | \
+    awk 'BEGIN {FS=OFS="\t"} {print $2, $1, $3}' > AccessionNumbers_taxids_Taxonomic_lineages_linking_table
+
+```
+
+The global table can now be generated by adding to the previous file nucleotide sequences according to their accession numbers:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+join -t $'\t' -1 1 -2 1 -a 1 \
+      <(sort -t $'\t' -k 1b,1 AccessionNumbers_taxids_Taxonomic_lineages_linking_table)\
+      <(sort -t $'\t' -k 1b,1 AccessionNumbers_seqs_linking_table) > Global_table
+
+```
+
+Optional check to make sure that every column of this table is complete:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+awk -F '\t' '{print $1}' Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $2}' Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $3}' Global_table | grep -c "^$"       # 0 => Ok
+awk -F '\t' '{print $4}' Global_table | grep -c "^$"       # 0 => Ok
+
+```
+
+Cleaning temporary files that are no longer useful
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm AccessionNumbers_taxids_linking_table_final
+rm AccessionNumbers_taxids_Taxonomic_lineages_linking_table
+rm AccessionNumbers_seqs_linking_table
+rm Taxids_taxonomic_lineages_linking_table
+rm Taxids_taxonomic_lineages_linking_table_final
+rm Taxids_taxonomic_lineages_linking_table_reformatted
+rm Taxids_uniq
+
+```
+
+Only in the case where taxonomic lineages could not be retrieved all at once, these additional files were also generated and can now be removed:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm Missing_taxids
+rm Missing_taxonomic_lineages
+rm Missing_taxonomic_lineages_reformatted
+rm Taxids_not_found
+rm Taxids_taxonomic_lineages_linking_table_merged
+rm Taxids_not_found.xml
+
+```
+
+
+# 5. CREATING QIIME2-FORMATTED FASTA AND TAXONOMIC LINEAGES FILES AND IMPORT TO QIIME2
+
+Creation of the FASTA file:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+awk -F '\t' 'BEGIN {OFS=""} {print ">",$1,"\n",$4}' Global_table | sed 's/-//g' > Fasta_file
+
+```
+
+Creation of the taxonomic lineages file:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$3}' Global_table > Taxonomic_lineages
+
+```
+
+Importing sequences into QIIME2:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+conda activate qiime2-2023.2 
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path Fasta_file \
+  --output-path Fasta_file.qza
+
+
+```
+
+
+# 6. REMOVING LOW QUALITY SEQUENCES
+
+The RESCRIPt QIIME2 plugin is used to discard low-quality sequences, i.e. those displaying ≥ 5 degenerate bases or containing a homopolymer sequence of ≥ 12 nucleotides:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+qiime rescript cull-seqs \
+    --i-sequences Fasta_file.qza \
+    --p-homopolymer-length 12 \
+    --p-n-jobs 14 \
+    --o-clean-sequences Fasta_file_tmp.qza
+
+mv Fasta_file_tmp.qza Fasta_file.qza
+
+qiime tools export \
+  --input-path Fasta_file.qza \
+  --output-path .
+
+```
+
+The “–p-n-jobs” option must be set according to the number of threads available on the computer carrying out the analysis.
+
+#### Corresponding entries must also be removed from the taxonomy file:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+fgrep -v -f \
+  <(cat \
+    <(grep ">" dna-sequences.fasta | cut -d ">" -f 2) \
+    <(cut -d $'\t' -f 1 Taxonomic_lineages) | sort | uniq -u) \
+  Taxonomic_lineages > Taxonomic_lineages_tmp
+
+mv Taxonomic_lineages_tmp Taxonomic_lineages
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path Taxonomic_lineages \
+  --output-path Taxonomic_lineages.qza
+
+```
+
+
+
+# 7. DEREPLICATING [Optional]
+
+RESCRIPt can then be used to remove redundant sequence data. As the relevance of such dereplication depends on several factors including the barcode of interest, the choice is left to the user to include it or not in the workflow.
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+qiime rescript dereplicate \
+    --i-sequences Fasta_file.qza \
+    --i-taxa Taxonomic_lineages.qza \
+    --p-mode 'uniq' \
+    --p-threads 14 \
+    --o-dereplicated-sequences Fasta_file_tmp.qza \
+    --o-dereplicated-taxa Taxonomic_lineages_tmp.qza
+
+mv Fasta_file_tmp.qza Fasta_file_derep.qza
+mv Taxonomic_lineages_tmp.qza Taxonomic_lineages_derep.qza
+
+
+```
+
+The “–p-threads” option must be set according to the number of threads available on the computer carrying out the analysis.
+
+
+Another possible dereplicated settings is "super"
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+qiime rescript dereplicate \
+    --i-sequences Fasta_file.qza \
+    --i-taxa Taxonomic_lineages.qza \
+    --p-mode 'super' \
+    --p-threads 18 \
+    --o-dereplicated-sequences Fasta_file_tmp_super.qza \
+    --o-dereplicated-taxa Taxonomic_lineages_tmp_super.qza
+mv Fasta_file_tmp_super.qza Fasta_file_derep_super.qza
+mv Taxonomic_lineages_tmp_super.qza Taxonomic_lineages_derep_super.qza
+
+```
+
+# 8. FILTERING OUT SUSPECTED FUNGAL SEQUENCES
+
+Sequence and taxonomy data must first be extracted from qza files:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+qiime tools export \
+  --input-path Fasta_file.qza \
+  --output-path . && mv dna-sequences.fasta Exported_fasta_file.fasta
+
+qiime tools export \
+  --input-path Taxonomic_lineages.qza \
+  --output-path . && awk 'NR>1' taxonomy.tsv > Exported_taxonomic_lineages.tsv
+
+```
+
+REPEAT FOR DEREP FILES
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+qiime tools export \
+  --input-path Fasta_file_derep.qza \
+  --output-path . && mv dna-sequences.fasta Exported_fasta_file_derep.fasta
+
+qiime tools export \
+  --input-path Taxonomic_lineages_derep.qza \
+  --output-path . && awk 'NR>1' taxonomy.tsv > Exported_taxonomic_lineages_derep.tsv
+
+qiime tools export \
+  --input-path Fasta_file_derep_super.qza \
+  --output-path . && mv dna-sequences.fasta Exported_fasta_file_derep_super.fasta
+
+qiime tools export \
+  --input-path Taxonomic_lineages_derep_super.qza \
+  --output-path . && awk 'NR>1' taxonomy.tsv > Exported_taxonomic_lineages_derep_super.tsv
+
+```
+
+
+These plant ITS2 sequences will then be blasted against fungi genomic RefSeqs in order to identify sequences suspected to have a fungal origin.
+
+#### Develop a local BLAST database from fungi genomic RefSeq database
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+for i in $(curl -l ftp://ftp.ncbi.nlm.nih.gov/refseq/release/fungi/ | grep "genomic.fna")
+do wget https://ftp.ncbi.nlm.nih.gov/refseq/release/fungi/$i
+done
+
+```
+
+Concatenating individual files into a single one
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+gzip -d *.gz
+
+cat *fna > fungi_genomic_refseqs.fna
+
+```
+
+Retrieving taxids
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+grep ">" fungi_genomic_refseqs.fna | cut -d ">" -f 2 | cut -d " " -f 1 > AccessionNumbers
+
+fgrep -w -f AccessionNumbers nucl_gb.accession2taxid > AccessionNumbers_taxids_linking_table
+
+```
+
+Retrieving missing taxids
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk -F '\t' '{print $2}' AccessionNumbers_taxids_linking_table > AccessionNumbers_found_in_accession2taxid
+
+cat AccessionNumbers AccessionNumbers_found_in_accession2taxid | sort | uniq -u > AccessionNumbers_not_found
+
+```
+
+Building one API query with all missing accession numbers and downloading the results as an xml file
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&rettype=fasta&retmode=xml&id="
+url+=$(paste -s -d "," AccessionNumbers_not_found)
+
+curl $url > AccessionNumbers_not_found.xml
+
+```
+
+Extracting the nodes of interest from the xml file
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+paste \
+ <(xmllint --xpath '//TSeq_accver/node()' AccessionNumbers_not_found.xml) \
+ <(xmllint --xpath '//TSeq_taxid/node()' AccessionNumbers_not_found.xml) > Missing_taxids
+
+```
+
+Merging both files in a single accession numbers/taxids linking table
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'BEGIN {FS=OFS="\t"} {print $2,$3}' AccessionNumbers_taxids_linking_table > AccessionNumbers_taxids_linking_table_extracted
+
+cat AccessionNumbers_taxids_linking_table_extracted Missing_taxids > AccessionNumbers_taxids_linking_table_final
+
+```
+
+Creating a local BLAST database from fungi genomic RefSeqs
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+makeblastdb \
+  -in fungi_genomic_refseqs.fna \
+  -parse_seqids \
+  -blastdb_version 5 \
+  -taxid_map AccessionNumbers_taxids_linking_table_final \
+  -title "fungi_genomic_refseqs" \
+  -dbtype nucl
+
+
+```
+
+Blasting plant ITS2 sequences against fungi genomic RefSeqs
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+blastn \
+  -db fungi_genomic_refseqs.fna \
+  -query Exported_fasta_file.fasta \
+  -num_threads 14 \
+  -max_target_seqs 1 \
+  -outfmt "6 qacc sacc evalue bitscore length pident ssciname scomname staxid" \
+  -out blastn_outfile_fungi_genomic_refseqs
+
+```
+
+Reformatting this output file and adding length data for each plant reference sequence
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+sort -buk 1,1 blastn_outfile_fungi_genomic_refseqs | sed "s/100.000/100/g" > blastn_outfile_fungi_genomic_refseqs_uniq
+
+awk -F '\t' '{print $1}' blastn_outfile_fungi_genomic_refseqs_uniq > AccessionNumbers_in_blastn_outfile
+
+paste \
+  <(cat AccessionNumbers_in_blastn_outfile) \
+  <(fgrep -w -f AccessionNumbers_in_blastn_outfile Global_table | awk -F '\t' '{print length($4)*0.95}' | cut -d ',' -f 1) > AccessionNumbers_seqs_length_linking_table
+
+join -t $'\t' -1 1 -2 1 -a 1 \
+      <(sort -t $'\t' -k 1b,1 blastn_outfile_fungi_genomic_refseqs_uniq)\
+      <(sort -t $'\t' -k 1b,1 AccessionNumbers_seqs_length_linking_table) > blastn_outfile_fungi_genomic_refseqs_uniq_withlengthdata
+
+#subl AccessionNumbers_seqs_length_linking_table
+#subl blastn_outfile_fungi_genomic_refseqs_uniq
+```
+
+Removing sequences showing at least 90% identity with fungi genomic RefSeqs on at least 95% of their length
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk -F '\t' '$6>=90' blastn_outfile_fungi_genomic_refseqs_uniq_withlengthdata | awk -F '\t' '$5>=$NF' | awk -F '\t' '{print $1}' > Sequences_to_remove
+
+#subl Sequences_to_remove
+#14seqs
+```
+
+
+#### Filtering out suspected fungal sequences from ITS reference sequences
+
+The suspected fungal sequences highlighted using fungi genomic RefSeqs can be removed from plant sequence and taxonomy files:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+grep -n -A 1 -f Sequences_to_remove Exported_fasta_file.fasta | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Exported_fasta_file.fasta > Fasta_file_without_fungi
+
+grep -v -f Sequences_to_remove Exported_taxonomic_lineages.tsv > Taxonomic_lineages_without_fungi
+
+```
+
+We repeat the process for the dereplicated files
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+grep -n -A 1 -f Sequences_to_remove Exported_fasta_file.fasta | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Exported_fasta_file_derep.fasta > Fasta_file_without_fungi_derep
+
+grep -v -f Sequences_to_remove Exported_taxonomic_lineages_derep.tsv > Taxonomic_lineages_without_fungi_derep
+
+
+
+grep -n -A 1 -f Sequences_to_remove Exported_fasta_file.fasta | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Exported_fasta_file_derep_super.fasta > Fasta_file_without_fungi_derep_super
+
+grep -v -f Sequences_to_remove Exported_taxonomic_lineages_derep_super.tsv > Taxonomic_lineages_without_fungi_derep_super
+
+```
+
+# 9. FILTERING OUT SUSPECTED MISIDENTIFIED SEQUENCES
+
+### Carrying out leaked cross-validation
+
+To identify sequences with a wrong identification, plant ITS2 reference sequences are analyzed in a cross-validation scheme with data leakage, i.e. where sets of test and training sequences are strictly identical. This allows comparing expected and predicted taxonomies for each sequence and discarding those for which the expected taxonomy at the family rank is observed only once in the top 5 hits resulting from the blastn analysis.
+
+The first step is to format the plant ITS2 sequence dataset to be compatible with the local BLAST command line applications:
+
+
+#### Creating a table linking accession numbers to taxids from filtered fasta file
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+grep ">" Fasta_file_without_fungi | cut -d ">" -f 2 > AccessionNumbers
+
+fgrep -f AccessionNumbers Global_table | awk 'BEGIN {FS=OFS="\t"} {print $1,$2}' > AccessionNumbers_taxids_linking_table
+
+grep ">" Fasta_file_without_fungi_derep | cut -d ">" -f 2 > AccessionNumbers_derep
+
+fgrep -f AccessionNumbers_derep Global_table | awk 'BEGIN {FS=OFS="\t"} {print $1,$2}' > AccessionNumbers_taxids_linking_table_derep
+
+grep ">" Fasta_file_without_fungi_derep_super | cut -d ">" -f 2 > AccessionNumbers_derep_super
+
+fgrep -f AccessionNumbers_derep_super Global_table | awk 'BEGIN {FS=OFS="\t"} {print $1,$2}' > AccessionNumbers_taxids_linking_table_derep_super
+
+```
+
+Generating the BLAST database
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+makeblastdb \
+  -in Fasta_file_without_fungi \
+  -parse_seqids \
+  -blastdb_version 5 \
+  -taxid_map AccessionNumbers_taxids_linking_table \
+  -title "Fasta_file_without_fungi" \
+  -dbtype nucl
+#Adding sequences from FASTA; added 17146 sequence
+
+makeblastdb \
+  -in Fasta_file_without_fungi_derep \
+  -parse_seqids \
+  -blastdb_version 5 \
+  -taxid_map AccessionNumbers_taxids_linking_table_derep \
+  -title "Fasta_file_without_fungi_derep" \
+  -dbtype nucl
+#Adding sequences from FASTA; added 13879 sequences
+
+makeblastdb \
+  -in Fasta_file_without_fungi_derep_super \
+  -parse_seqids \
+  -blastdb_version 5 \
+  -taxid_map AccessionNumbers_taxids_linking_table_derep_super \
+  -title "Fasta_file_without_fungi_derep_super" \
+  -dbtype nucl
+#Adding sequences from FASTA; added 13505 sequences 
+```
+
+
+Plant ITS2 sequences can then be blasted against themeselves:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+blastn \
+  -db ./Fasta_file_without_fungi \
+  -query Fasta_file_without_fungi \
+  -num_threads 14 \
+  -max_target_seqs 5 \
+  -outfmt "6 qacc sacc evalue bitscore length pident ssciname scomname staxid" \
+  -out blastn_outfile_leakedCV
+
+blastn \
+  -db ./Fasta_file_without_fungi_derep \
+  -query Fasta_file_without_fungi_derep \
+  -num_threads 14 \
+  -max_target_seqs 5 \
+  -outfmt "6 qacc sacc evalue bitscore length pident ssciname scomname staxid" \
+  -out blastn_outfile_leakedCV_derep
+
+blastn \
+  -db ./Fasta_file_without_fungi_derep_super \
+  -query Fasta_file_without_fungi_derep_super \
+  -num_threads 14 \
+  -max_target_seqs 5 \
+  -outfmt "6 qacc sacc evalue bitscore length pident ssciname scomname staxid" \
+  -out blastn_outfile_leakedCV_derep_super
+
+```
+
+Job too big for local computer to sent job to CESGA [not a problem with the geo restricted Database]:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+forticlient vpn connect CESGA
+
+cd /mnt/lustre/scratch/nlsas//home/csic/dde/pla/FringillaProject/PollenUCR/RefDB
+
+scp Fasta_file_without_fungi* csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas//home/csic/dde/pla/FringillaProject/PollenUCR/RefDB
+
+scp Fasta_file_without_fungi_derep.n* csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas//home/csic/dde/pla/FringillaProject/PollenUCR/RefDB
+
+sbatch ITS2_balstn_QIIME2.sh
+#Queued time 09:56:58; Run time 05:14:13, COMPLETED
+sbatch ITS2_balstn_QIIME2_derep.sh
+#Queued time 09:56:45; Run time 03:21:35
+sacct
+
+scp csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/PollenUCR/RefDB/blastn_outfile_leakedCV /home/kari/Dropbox/PollenUCR/03_Data/RefDB
+
+
+scp csddepla@ft3.cesga.es:/mnt/lustre/scratch/nlsas/home/csic/dde/pla/FringillaProject/PollenUCR/RefDB/blastn_outfile_leakedCV_derep /home/kari/Dropbox/PollenUCR/03_Data/RefDB
+
+```
+
+
+### Processing leaked CV results to compare expected to predicted taxonomies
+
+#### Extracting results for the top 5 matches
+
+First, information related to sequence accession numbers and taxids of top 5 hits is retrieved:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+awk -F '\t' '{print $1}' blastn_outfile_leakedCV | sort | uniq > AccessionNumbers_in_blastn_outfile
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$9}' blastn_outfile_leakedCV > AccessionNumbers_PredictedTaxids_linking_table
+
+awk -F '\t' '{print $1}' blastn_outfile_leakedCV_derep | sort | uniq > AccessionNumbers_in_blastn_outfile_derep
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$9}' blastn_outfile_leakedCV_derep > AccessionNumbers_PredictedTaxids_linking_table_derep
+
+awk -F '\t' '{print $1}' blastn_outfile_leakedCV_derep_super | sort | uniq > AccessionNumbers_in_blastn_outfile_derep_super
+
+awk 'BEGIN {FS=OFS="\t"} {print $1,$9}' blastn_outfile_leakedCV_derep_super > AccessionNumbers_PredictedTaxids_linking_table_derep_super
+
+```
+
+
+These files are then used to keep only the top 5 hits for each reference sequence:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'seen[$1]++{ $1="" }1' OFS='\t' AccessionNumbers_PredictedTaxids_linking_table \
+  | fgrep -w -A 4 -f AccessionNumbers_in_blastn_outfile \
+  | sed '/--/d' > AccessionNumbers_PredictedTaxids_linking_table_top5
+
+paste \
+  <(awk -F '\t' '{print $1}' AccessionNumbers_PredictedTaxids_linking_table_top5 | awk 'BEGIN {FS=OFS="\t"} NF {p = $0} {print p}') \
+  <(awk -F '\t' 'BEGIN {FS=OFS="\t"} {print $2}' AccessionNumbers_PredictedTaxids_linking_table_top5) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+
+# derep
+
+awk 'seen[$1]++{ $1="" }1' OFS='\t' AccessionNumbers_PredictedTaxids_linking_table \
+  | fgrep -w -A 4 -f AccessionNumbers_in_blastn_outfile_derep \
+  | sed '/--/d' > AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+paste \
+  <(awk -F '\t' '{print $1}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep | awk 'BEGIN {FS=OFS="\t"} NF {p = $0} {print p}') \
+  <(awk -F '\t' 'BEGIN {FS=OFS="\t"} {print $2}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+
+# derep super
+
+awk 'seen[$1]++{ $1="" }1' OFS='\t' AccessionNumbers_PredictedTaxids_linking_table \
+  | fgrep -w -A 4 -f AccessionNumbers_in_blastn_outfile_derep_super \
+  | sed '/--/d' > AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+
+paste \
+  <(awk -F '\t' '{print $1}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super | awk 'BEGIN {FS=OFS="\t"} NF {p = $0} {print p}') \
+  <(awk -F '\t' 'BEGIN {FS=OFS="\t"} {print $2}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+
+```
+
+Despite the ‘-max_target_seqs’ parameter set to 5 during the blastn analysis, this step is useful to keep only the five best matches since blastn results can display more than 5 hits in case of ties.
+
+Lines must then be numbered to allow further data processing:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'BEGIN {FS=OFS="\t"} {print NR,$0}' AccessionNumbers_PredictedTaxids_linking_table_top5 > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+
+awk 'BEGIN {FS=OFS="\t"} {print NR,$0}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+awk 'BEGIN {FS=OFS="\t"} {print NR,$0}' AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+
+
+```
+
+
+### Adding taxonomies of the top 5 matches at the family rank
+
+
+New linking tables displaying taxonomy information at the family rank must first be generated:
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+paste \
+  <(awk 'BEGIN {FS=OFS="\t"} {print $1}' Global_table) \
+  <(awk 'BEGIN {FS=OFS="\t"} {print $3}' Global_table | awk -F '; ' '{print $5}') > AccessionNumbers_taxonomic_lineages_linking_table
+
+paste \
+  <(awk 'BEGIN {FS=OFS="\t"} {print $2}' Global_table) \
+  <(awk 'BEGIN {FS=OFS="\t"} {print $3}' Global_table | awk -F '; ' '{print $5}') | sort -buk 1,1 > Taxids_taxonomic_lineages_linking_table
+
+```
+
+Predicted taxonomies are then added to the working table:
+
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+LC_ALL=C join -t $'\t' -1 3 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 3 AccessionNumbers_PredictedTaxids_linking_table_top5) \
+  <(LC_ALL=C sort -t $'\t' -k 1 Taxids_taxonomic_lineages_linking_table) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+
+
+LC_ALL=C join -t $'\t' -1 3 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 3 AccessionNumbers_PredictedTaxids_linking_table_top5_derep) \
+  <(LC_ALL=C sort -t $'\t' -k 1 Taxids_taxonomic_lineages_linking_table) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+LC_ALL=C join -t $'\t' -1 3 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 3 AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super) \
+  <(LC_ALL=C sort -t $'\t' -k 1 Taxids_taxonomic_lineages_linking_table) > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+```
+
+
+This table must then be reformatted so that it can then welcome expected taxonomies:
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+sort -n -k 2 AccessionNumbers_PredictedTaxids_linking_table_top5 | awk 'BEGIN {FS=OFS="\t"} {print $3,$4}' > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+
+awk 'BEGIN {FS=OFS="\t"} $1 != prev { printf "%s%s", ors, $1; prev=$1; ors=ORS } { printf " %s", $2 } END { print "" }' AccessionNumbers_PredictedTaxids_linking_table_top5 | sed "s/ /\t/g" > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5
+
+sort -n -k 2 AccessionNumbers_PredictedTaxids_linking_table_top5_derep | awk 'BEGIN {FS=OFS="\t"} {print $3,$4}' > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+awk 'BEGIN {FS=OFS="\t"} $1 != prev { printf "%s%s", ors, $1; prev=$1; ors=ORS } { printf " %s", $2 } END { print "" }' AccessionNumbers_PredictedTaxids_linking_table_top5_derep | sed "s/ /\t/g" > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+sort -n -k 2 AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super | awk 'BEGIN {FS=OFS="\t"} {print $3,$4}' > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+
+awk 'BEGIN {FS=OFS="\t"} $1 != prev { printf "%s%s", ors, $1; prev=$1; ors=ORS } { printf " %s", $2 } END { print "" }' AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super | sed "s/ /\t/g" > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+
+```
+
+#### Adding expected taxonomy
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+
+LC_ALL=C join -t $'\t' -1 1 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_PredictedTaxids_linking_table_top5) \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_taxonomic_lineages_linking_table) -o 1.1,2.2,1.2,1.3,1.4,1.5,1.6 > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp AccessionNumbers_PredictedTaxids_linking_table_top5
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5
+
+LC_ALL=C join -t $'\t' -1 1 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_PredictedTaxids_linking_table_top5_derep) \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_taxonomic_lineages_linking_table) -o 1.1,2.2,1.2,1.3,1.4,1.5,1.6 > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+LC_ALL=C join -t $'\t' -1 1 -2 1 -a 1 \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super) \
+  <(LC_ALL=C sort -t $'\t' -k 1 AccessionNumbers_taxonomic_lineages_linking_table) -o 1.1,2.2,1.2,1.3,1.4,1.5,1.6 > AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super && mv AccessionNumbers_PredictedTaxids_linking_table_top5_tmp_derep_super AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super
+#subl AccessionNumbers_PredictedTaxids_linking_table_top5_derep
+
+
+```
+
+#### Counting the number of times the expected family is observed in the taxonomy of the top 5 hits
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'BEGIN {FS=OFS="\t"} { i=$1; $1=""; print i, gsub($2,"")-1 }' AccessionNumbers_PredictedTaxids_linking_table_top5 > Predicted_taxonomy_count
+
+#subl Predicted_taxonomy_count
+
+awk 'BEGIN {FS=OFS="\t"} { i=$1; $1=""; print i, gsub($2,"")-1 }' AccessionNumbers_PredictedTaxids_linking_table_top5_derep > Predicted_taxonomy_count_derep
+
+#subl Predicted_taxonomy_count_derep
+
+awk 'BEGIN {FS=OFS="\t"} { i=$1; $1=""; print i, gsub($2,"")-1 }' AccessionNumbers_PredictedTaxids_linking_table_top5_derep_super > Predicted_taxonomy_count_derep_super
+
+#subl Predicted_taxonomy_count_derep_super
+
+```
+
+
+#### Removing sequences for which the expected family is observed only once in the taxonomy of the top 5 hits
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+awk 'BEGIN {FS=OFS="\t"} $2==1 {print $1}' Predicted_taxonomy_count > Sequences_to_remove
+
+grep -n -A 1 -f Sequences_to_remove Fasta_file_without_fungi | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Fasta_file_without_fungi > NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta
+
+grep -v -f Sequences_to_remove Taxonomic_lineages_without_fungi > NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10.tsv
+
+grep -c '^>' Fasta_file_without_fungi
+#17146
+
+grep -c '^>' NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta
+#17146
+
+
+awk 'BEGIN {FS=OFS="\t"} $2==1 {print $1}' Predicted_taxonomy_count_derep > Sequences_to_remove_derep
+
+grep -n -A 1 -f Sequences_to_remove Fasta_file_without_fungi_derep | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Fasta_file_without_fungi_derep > NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.fasta
+
+grep -v -f Sequences_to_remove Taxonomic_lineages_without_fungi_derep > NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep.tsv
+
+grep -c '^>' Fasta_file_without_fungi_derep
+#13879
+
+grep -c '^>' NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.fasta
+#13879
+
+
+awk 'BEGIN {FS=OFS="\t"} $2==1 {print $1}' Predicted_taxonomy_count_derep_super > Sequences_to_remove_derep_super
+
+grep -n -A 1 -f Sequences_to_remove Fasta_file_without_fungi_derep_super | \
+sed -n 's/^\([0-9]\{1,\}\).*/\1d/p' | \
+sed -f - Fasta_file_without_fungi_derep_super > NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.fasta
+
+grep -v -f Sequences_to_remove Taxonomic_lineages_without_fungi_derep_super > NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep_super.tsv
+
+grep -c '^>' Fasta_file_without_fungi_derep_super
+#13505
+
+grep -c '^>' NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.fasta
+#13505
+
+
+```
+
+##### Cleaning temporary files that are no longer useful
+
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+rm Exported_*
+rm blastn_outfile_*
+rm AccessionNumbers*
+rm Sequences_to_remove*
+rm Fasta_file_without_fungi
+rm Taxonomic_lineages_without_fungi
+rm Taxids_taxonomic_lineages_linking_table
+rm Predicted_taxonomy_count
+
+# If a local BLAST database was developed from fungi genomic RefSeq dataset, the following files can also be removed:
+
+rm fungi_genomic_refseqs.fna
+rm Missing_taxids
+
+
+```
+
+### Importing data into QIIME2
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+conda activate qiime2-2023.2 
+
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10.tsv \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10.qza
+
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep.tsv \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep.qza
+
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.fasta \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --input-format HeaderlessTSVTaxonomyFormat \
+  --input-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep_super.tsv \
+  --output-path NCBI_ITS2_Viridiplantae_geoRestricted_taxonomic_lineages_2023_05_10_derep_super.qza
+
+# check files using qiime's view function
+# I exported the tsv file from qiime's visualization tool, convert it into fasta and then then manually merge the local DB (Paramo)
+
+qiime metadata tabulate \
+  --m-input-file NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.qza \
+  --o-visualization NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.qzv
+
+#NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10.tsv
+
+qiime metadata tabulate \
+  --m-input-file NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.qza \
+  --o-visualization NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep.qzv
+
+#NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.tsv
+
+qiime metadata tabulate \
+  --m-input-file NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.qza \
+  --o-visualization NCBI_ITS2_Viridiplantae_geoRestricted_fasta_file_2023_05_10_derep_super.qzv
+
+#NCBI_ITS2_Viridiplantae_geoRestricted_derep_fasta_file_2023_05_10.tsv
+
+```
+
+I used these output files to then merge our local ITS2 reference database. The merged files are then imported to QIIME2 (ITS2_Import_DB_QIIME2.rmd)

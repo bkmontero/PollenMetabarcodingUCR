@@ -1,0 +1,569 @@
+---
+title: 'Exploration alpha diversity of insect visitors'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+### LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+
+# graphics
+library(ggplot2)
+library(ggpubr)
+library(ggVennDiagram)
+library(grid)
+library(png)
+library(cowplot)
+library(magick)
+library(gtable)
+
+# diversity 
+library(iNEXT)
+library(hilldiv)
+
+# rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+### WORKING DIRECTORIES
+
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+source("/home/kari/Dropbox/REPO/PollenMetabarcoding/pollen_graphics_param.R")
+```
+
+
+### LOAD DATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+bichos_long_filter <- read.csv(paste0(dataDir, "/bichos_long_filter.csv"))
+
+(sample_size_project <- bichos_long_filter %>%
+ 							group_by(Project) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+(sample_size_proj_season <- bichos_long_filter %>%
+ 							group_by(Proj_season) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+(sample_size_crop <- bichos_long_filter %>%
+							filter(Project == "Cultivos") %>%
+ 							group_by(Plant_species) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+(sample_size_farm <- bichos_long_filter %>%
+ 							group_by(Proj_site, Farm_transect) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+```
+
+
+# ALPHA DIVERSITY
+
+## Is insect visitor alpha diversity different between fruit crops and native plants across seasons?
+
+Prepare incidence data 
+
+```{r projSeasoniNextData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results = "hide"}
+
+# Incidence_raw = species-by-sampling-unit matrix 
+
+bichos_long_filter$Sampling_unit <- paste("Gira", bichos_long_filter$Sampling_session, bichos_long_filter$Fruitcrop_transect, bichos_long_filter$Day, bichos_long_filter$Month, sep = "_")
+
+bichos_sampling <- bichos_long_filter %>%
+				group_by(Proj_season, Sampling_unit,  Lowest_assignment) %>%
+				summarise(n_Lowest = n()) %>% 
+				mutate(n_Lowest = as.integer(ifelse(n_Lowest > 0, 1, 0)) )
+head(bichos_sampling, 3)
+
+# format cultivos dry into a integer matrix
+incidence_cultivos_dry <- bichos_sampling %>% 
+					filter(Proj_season == "Cultivos_dry") %>% 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Proj_season) %>%
+					data.frame
+str(incidence_cultivos_dry)
+
+incidence_cultivos_dry <- as.matrix(apply(incidence_cultivos_dry[,-1],2,as.integer))
+rownames(incidence_cultivos_dry) <- incidence_cultivos_dry[,1]
+
+# format cultivos rainy into a integer matrix
+incidence_cultivos_rainy <- bichos_sampling %>% 
+					filter(Proj_season == "Cultivos_rainy") %>% 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Proj_season) %>%
+					data.frame
+str(incidence_cultivos_rainy)
+
+incidence_cultivos_rainy <- as.matrix(apply(incidence_cultivos_rainy[,-1],2,as.integer))
+rownames(incidence_cultivos_rainy) <- incidence_cultivos_rainy[,1]
+
+# format silvestres dry into a integer matrix
+incidence_silvestres_dry <- bichos_sampling %>% 
+					filter(Proj_season == "Silvestres_dry") %>% 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Proj_season) 
+incidence_silvestres_dry <- as.matrix(apply(incidence_silvestres_dry[,-1],2,as.integer))
+
+rownames(incidence_silvestres_dry) <- incidence_silvestres_dry[,1]
+str(incidence_silvestres_dry)
+
+# format silvestres rainy into a integer matrix
+incidence_silvestres_rainy <- bichos_sampling %>% 
+					filter(Proj_season == "Silvestres_rainy") %>% 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Proj_season) 
+incidence_silvestres_rainy <- as.matrix(apply(incidence_silvestres_rainy[,-1],2,as.integer))
+rownames(incidence_silvestres_rainy) <- incidence_silvestres_rainy[,1]
+str(incidence_silvestres_rainy)
+
+# create a list 
+incidence_bichos <- list(Cultivos_dry = incidence_cultivos_dry, Cultivos_rainy = incidence_cultivos_rainy, Silvestres_dry = incidence_silvestres_dry, Silvestres_rainy = incidence_silvestres_rainy)
+str(incidence_bichos)
+
+```
+Venn of shared taxonomy (lower_assignment)
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, eval= FALSE}
+
+cultivos_rainy <- bichos_sampling %>% 
+					filter(Proj_season == "Cultivos_rainy") %>%
+					group_by(Lowest_assignment) %>%
+					select(Lowest_assignment) %>% 
+					slice(1) %>%
+					data.frame
+cultivos_dry <- bichos_sampling %>% 
+					filter(Proj_season == "Cultivos_dry") %>%
+					group_by(Lowest_assignment) %>%
+					select(Lowest_assignment) %>% 
+					slice(1) %>%
+					data.frame 
+silvestres_rainy <- bichos_sampling %>% 
+					filter(Proj_season == "Silvestres_rainy") %>%
+					group_by(Lowest_assignment) %>%
+					select(Lowest_assignment) %>% 
+					slice(1) %>%
+					data.frame 
+silvestres_dry <- bichos_sampling %>% 
+					filter(Proj_season == "Silvestres_dry") %>%
+					group_by(Lowest_assignment) %>%
+					select(Lowest_assignment) %>% 
+					slice(1) %>%
+					data.frame 
+list_all <- list(silvestres_dry = silvestres_dry[,1], cultivos_dry = cultivos_dry[,1], silvestres_rainy = silvestres_rainy[, 1], cultivos_rainy = cultivos_rainy[,1])
+str(list_all)
+
+# construct a Venn object
+venn = Venn(list_all)
+data = process_data(venn, shape_id = "401f")
+str(data)
+data_mod <- venn_region(data) %>%
+		mutate(percent = scales::percent(round(venn_region(data)$count/sum(venn_region(data)$count),3))) 
+
+venn_visitors <- ggplot() +
+  geom_sf(aes(fill = count), data = venn_region(data)) +
+  geom_sf(color = "grey20", data = venn_setedge(data), show.legend = FALSE) +
+  geom_sf_text(label = c("Wild plants \n Dry", "Fruit crops \n Dry", "Wild plants \n Wet", "Fruit crops \n Wet"), data = venn_setlabel(data), size = 3.1) +
+  geom_sf_label(aes(label = paste0(count, "(", percent, ")")),
+  		data = data_mod, alpha = 0.6, size = 2.8)+
+  theme_void() +
+  scale_fill_distiller(name = "n Taxa", palette = "PiYG", breaks = c(20, 60, 100, 140)) + 
+  scale_x_continuous(expand = expansion(mult = .2))+ 
+  theme(legend.position = "bottom",
+  		legend.key.size = unit(0.5, 'cm'), 
+  		legend.title = element_text(size = 10), 
+  		legend.text = element_text(size = 9))
+
+#png(paste0(outputDir, "/Figures/venn_visitors.png"), width = 3000, height = 2800, res = 250) 
+venn_visitors
+#dev.off()
+
+```
+
+Run iNEXT on incidence data
+
+```{r projSeasonIncid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+inext_visitors <- iNEXT(incidence_bichos, q = c(0, 1, 2), datatype = "incidence_raw")
+
+DataInfo(incidence_bichos, "incidence_raw")
+```
+
+Completeness curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#Sample completeness curve (type=2) with confidence intervals (if se=TRUE): see Figs. 1b and 2b in Hsieh et al. (2016). This curve plots the sample coverage with respect to sample size for the same range described in (1).
+
+proj_season_compl_curve <- ggiNEXT(inext_visitors, type = 2)
+
+proj_season_compl_curve_p <- proj_season_compl_curve + 
+					proj_season_color +
+					proj_season_fill + 
+					pca_theme + 
+					annotate(geom = "text", x = 7, y= 0.56, 
+						label = "Fruit crops, Dry season (56%)", hjust = -.2) +
+					annotate(geom = "text", x = 10, y= 0.70, 
+						label = "Wild plants, Dry season (70%)", hjust = -.2) +
+					annotate(geom = "text", x = 22, y= 0.83, 
+						label = "Wild plants, Rainy season (83%)", hjust = -.2) +
+					annotate(geom = "text", x = 28, y= 0.85, 
+						label = "Fruit crops, Rainy season (85%)", hjust = -.2) +
+					theme_set(theme_bw(base_size = 14)) + 
+					theme(legend.position = "none", axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+proj_season_compl_curve_p 
+ 
+
+#png(paste0(outputDir, "/Figures/proj_season_completeness_curve.png"), width = 2700, height = 1700, res = 250) 
+proj_season_compl_curve_p 
+#dev.off()
+ 	
+```
+
+Coverage-based curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# Coverage-based R/E curve (type=3): see Figs. 1c and 2c in Hsieh et al. (2016). This curve plots the diversity estimates with confidence intervals (if se=TRUE) as a function of sample coverage up to the maximum coverage obtained from the maximum size described in (1)
+
+proj_season_coverage_curve <- ggiNEXT(inext_visitors, type = 3, facet.var = "Order.q")
+
+proj_season_coverage_curve_p <- proj_season_coverage_curve + 
+					proj_season_color +
+					proj_season_fill + 
+					proj_season_shape +
+					pca_theme + 
+					theme_set(theme_bw(base_size = 14)) + 
+					theme( axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+proj_season_coverage_curve_p
+
+#png(paste0(outputDir, "/Figures/proj_season_RE_curve.png"), width = 3000, height = 1700, res = 250) 
+proj_season_coverage_curve_p 
+#dev.off()
+
+```
+
+> The coverage for incidence data is lower than that of abundance data. Fruitcrops during the dry season has the lowest coverage, 56%, with a reference sample size of 7 sampling units, is followed by the wild plant transects with an estimated coverage of 71% with a reference sample size of 11 sampling units. This means that 44% of individuals sampled in the dry season in fruitcrops belong to species missed during fieldwork.  The coverage during the rainy season is similar for both fruitcrops and wild plant transects, estimates as 86% and 84% with a reference sample size of 36 and 26 sampling units respectively. 
+> 
+
+Hill numbers estimates (coverageD)
+
+```{r projSeasonCoverage, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+coverage_incidence <- estimateD(incidence_bichos, q = c(0, 1, 2), datatype = "incidence_raw", base = "coverage", conf = 0.95)
+
+coverage_incidence$ID <- paste("Incidence", coverage_incidence$Assemblage, coverage_incidence$Order.q, sep = "_")
+
+coverage_incidence_long <- coverage_incidence %>%
+						select(-Assemblage, -Order.q, -t, - Method, -SC) %>%
+						pivot_longer(!ID, 
+									names_to = "iNEXT_est", 
+									values_to = "estimate")
+
+coverage_incidence_long <- coverage_incidence_long %>% separate_wider_delim(cols = ID, delim = "_", names = c("Data_type", "Project", "Season", "Hill_number"))
+```
+
+
+PLot Incidence Data (coverage)
+
+```{r projSeasonIncidCoveragePlots, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE,  fig.show="hide"}
+
+season_names <- c('dry' = "Dry", 'rainy' = "Wet" )
+
+(richness_coverage_p <- coverage_incidence_long %>% 
+				filter(Hill_number == "0", Data_type == "Incidence") %>% 
+				pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+				ggplot(aes(x = Project, y = qD, group=1)) +
+	  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+	  				 geom_point(shape=21, size=4, fill="grey") +
+	  				 facet_grid(~Season, labeller = as_labeller(season_names)) + 
+	  				 scale_x_discrete(labels=c('Cultivos' = "Fruit crops", 'Silvestres' = "Wild plants")) +
+	  				 xlab("") + ylab("Richness") +
+	  				 div_theme + 
+	  				 theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust=1)))
+
+(shannon_coverage_p <- coverage_incidence_long %>% 
+				filter(Hill_number == "1", Data_type == "Incidence") %>% 
+				pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+				ggplot(aes(x = Project, y = qD, group=1)) +
+	  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+	  				geom_point(shape=21, size=4, fill="grey") +
+	  				 facet_grid(~Season, labeller = as_labeller(season_names)) + 
+	  				 scale_x_discrete(labels=c('Cultivos' = "Fruit crops", 'Silvestres' = "Wild plants")) +
+	  				 xlab("") + ylab("Hill-Shannon") +
+	  				 div_theme + 
+	  				 theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust=1)))
+
+(simpson_coverage_p <- coverage_incidence_long %>% 
+				filter(Hill_number == "2", Data_type == "Incidence") %>% 
+				pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+				ggplot(aes(x = Project, y = qD, group=1)) +
+	  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+	  				 geom_point(shape=21, size=4, fill="grey") +
+	  				 facet_grid(~Season, labeller = as_labeller(season_names)) + 
+	  				 scale_x_discrete(labels=c('Cultivos' = "Fruit crops", 'Silvestres' = "Wild plants")) +
+	  				 xlab("") + ylab("Hill-Simpson") +
+	  				 div_theme + 
+	  				 theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust=1)))
+
+#alpha_visitors_p <- ggarrange(richness_coverage_p, shannon_coverage_p, simpson_coverage_p, nrow = 1, labels = c("a)", "b)", "c)"), font.label = list(size = 16, face = "bold"))
+
+alpha_visitors_p <- ggarrange(richness_coverage_p, shannon_coverage_p, simpson_coverage_p, nrow = 1)
+
+#png(paste0(outputDir, "/Figures/alpha_visitors_proj_season.png"), width = 3000, height = 1200, res = 300) 
+alpha_visitors_p
+#dev.off()
+
+```
+
+## Within fruit crop diversity
+
+### Is insect visitor alpha diversity different across fruit crops?
+
+```{r cultivosiNextData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results = "hide"}
+
+#1. incidence_raw = species-by-sampling-unit matrix 
+
+bichos_long_filter$Sampling_unit <- paste("Gira", bichos_long_filter$Sampling_session, bichos_long_filter$Fruitcrop_transect, bichos_long_filter$Day, bichos_long_filter$Month, sep = "_")
+
+bichos_sampling <- bichos_long_filter %>%
+				filter(Project == "Cultivos") %>%
+				group_by(Plant_species , Sampling_unit,  Lowest_assignment) %>%
+				summarise(n_Lowest = n()) %>% 
+				mutate(n_Lowest = as.integer(ifelse(n_Lowest > 0, 1, 0)) )
+head(bichos_sampling)
+tail(bichos_sampling)
+table(bichos_sampling$Plant_species)
+
+# format Malus into a integer matrix
+incidence_malus <- bichos_sampling %>%
+					filter(Plant_species == "Malus domestica") %>%	 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Plant_species) %>%
+					data.frame
+str(incidence_malus)
+incidence_malus <- as.matrix(apply(incidence_malus[,-1],2,as.integer))
+rownames(incidence_malus) <- incidence_malus[,1]
+
+# format Persea into a integer matrix
+incidence_persea <- bichos_sampling %>%
+					filter(Plant_species == "Persea americana") %>%	 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Plant_species) %>%
+					data.frame
+str(incidence_persea)
+incidence_persea <- as.matrix(apply(incidence_persea[,-1],2,as.integer))
+rownames(incidence_persea) <- incidence_persea[,1]
+
+# format Prunus into a integer matrix
+incidence_prunus <- bichos_sampling %>%
+					filter(Plant_species == "Prunus domestica") %>%	 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Plant_species) %>%
+					data.frame
+str(incidence_prunus)
+incidence_prunus <- as.matrix(apply(incidence_prunus[,-1],2,as.integer))
+rownames(incidence_prunus) <- incidence_prunus[,1]
+
+# format Rubus into a integer matrix
+incidence_rubus <- bichos_sampling %>%
+					filter(Plant_species == "Rubus") %>%	 
+					group_by(Sampling_unit) %>%
+					spread(Sampling_unit, n_Lowest, fill = 0) %>% select(-Plant_species) %>%
+					data.frame
+str(incidence_rubus)
+incidence_rubus <- as.matrix(apply(incidence_rubus[,-1],2,as.integer))
+rownames(incidence_rubus) <- incidence_rubus[,1]
+
+# create a list 
+incidence_bichos <- list(Malus = incidence_malus, Persea = incidence_persea, Prunus = incidence_prunus, Rubus = incidence_rubus)
+str(incidence_bichos)
+
+```
+
+
+iNEXT on within fruit crop incidence data 
+
+```{r inextCultivosIncid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+inext_visitors <- iNEXT(incidence_bichos, q = c(0, 1, 2), datatype = "incidence_raw")
+
+inext_visitors$DataInfo
+
+coverage_incidence <- estimateD(incidence_bichos, q = c(0, 1, 2), datatype = "incidence_raw", base = "coverage", conf = 0.95)
+
+```
+
+Completeness curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+#Sample completeness curve (type=2) with confidence intervals (if se=TRUE): see Figs. 1b and 2b in Hsieh et al. (2016). This curve plots the sample coverage with respect to sample size for the same range described in (1).
+
+fruitcrop_compl_curve <- ggiNEXT(inext_visitors, type = 2)
+
+labels <- data.frame(
+  x = c(4, 3, 8, 20), 
+  y = c(0.45, 0.45, 0.68, 0.86), 
+  label = c("()", "()", "()", "()")
+)
+
+fruitcrop_compl_curve_p <- fruitcrop_compl_curve + 
+					crop_color +
+					crop_fill + 
+					pca_theme + 
+					annotate(geom = "text", x = 4, y= 0.45, 
+						label = "Malus domestica (45%)", hjust = -.2) +
+					annotate(geom = "text", x = 2, y= 0.50, 
+						label = "Prunus domestica (45%)", hjust = -.2) +
+					annotate(geom = "text", x = 8, y= 0.68, 
+						label = "Rubus (68%)", hjust = -.2) +
+					annotate(geom = "text", x = 20, y= 0.86, 
+						label = "Persea americana (86%)", hjust = -.2) +
+					theme_set(theme_bw(base_size = 14)) + 
+					theme(legend.position = "none", axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+fruitcrop_compl_curve_p 
+
+png(paste0(outputDir, "/Figures/fruitcrop_completeness_curve.png"), width = 2700, height = 1700, res = 250) 
+fruitcrop_compl_curve_p 
+dev.off()
+ 	
+```
+
+>Sample coverage is lowest for Prunus (40%), followed by Malus (62%), Rubus (68%) and Persea (86%) with reference sample sizes od 6, 9, 8 and 20 sampling units respectively. 
+
+
+Coverage-based curve 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# Coverage-based R/E curve (type=3): see Figs. 1c and 2c in Hsieh et al. (2016). This curve plots the diversity estimates with confidence intervals (if se=TRUE) as a function of sample coverage up to the maximum coverage obtained from the maximum size described in (1)
+
+fruitcrop_coverage_curve <- ggiNEXT(inext_visitors, type = 3, facet.var = "Order.q")
+
+fruitcrop_coverage_curve_p <- fruitcrop_coverage_curve + 
+					crop_color +
+					crop_fill + 
+					pca_theme + 
+					theme_set(theme_bw(base_size = 14)) + 
+					theme( axis.line = element_line(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_blank(),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+fruitcrop_coverage_curve_p
+
+png(paste0(outputDir, "/Figures/fruitcrop_RE_curve.png"), width = 3000, height = 1700, res = 250) 
+fruitcrop_coverage_curve_p 
+dev.off()
+
+```
+
+Within crops Hill numbers estimates (coverageD)
+
+```{r cultivosAbundCoverage, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+coverage_incidence$ID <- paste("Incidence", coverage_incidence$Assemblage, coverage_incidence$Order.q, sep = "_")
+
+coverage_incidence_long <- coverage_incidence %>%
+						select(-Assemblage, -Order.q, -t, - Method, -SC) %>%
+						pivot_longer(!ID, 
+									names_to = "iNEXT_est", 
+									values_to = "estimate")
+
+
+coverage_incidence_long <- coverage_incidence_long %>% separate_wider_delim(cols = ID, delim = "_", names = c("Data_type", "Project", "Hill_number"))
+str(coverage_incidence_long)
+
+```
+
+Plot coverage-based Hill diversity
+
+```{r CropsIncidCoveragePlots, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE,  fig.show="hide"}
+
+(richness_coverage_p <- coverage_incidence_long %>% 
+			filter(Hill_number == "0", Data_type == "Incidence") %>% 
+			pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+			ggplot(aes(x = Project, y = qD, group=1)) +
+  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+  				 geom_point(shape=21, size=4, fill="grey")+
+  				 xlab("") + ylab("Richness") +
+  				 div_theme + 
+	  			theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1)))
+
+(shannon_coverage_p <- coverage_incidence_long %>% 
+			filter(Hill_number == "1", Data_type == "Incidence") %>% 
+			pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+			ggplot(aes(x = Project, y = qD, group=1)) +
+  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+  				 geom_point(shape=21, size=4, fill="grey")+
+  				 xlab("") + ylab("Hill-Shannon") +
+  				 div_theme + 
+	  			theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1)))
+
+(simpson_coverage_p <- coverage_incidence_long %>% 
+			filter(Hill_number == "2", Data_type == "Incidence") %>% 
+			pivot_wider(names_from = "iNEXT_est", values_from = "estimate") %>%
+			ggplot(aes(x = Project, y = qD, group=1)) +
+  				 geom_errorbar(width=.1, aes(ymin = qD.LCL, ymax = qD.UCL)) +
+  				 geom_point(shape=21, size=4, fill="grey")+
+  				 xlab("") + ylab("Hill-Simpson") +
+  				 div_theme + 
+	  			theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 0.9, hjust=1)))
+
+alpha_fruitcrops_p <- ggarrange(richness_coverage_p, shannon_coverage_p, simpson_coverage_p, nrow = 1)
+
+```
+
+
+Figure 1
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, eval = FALSE}
+
+
+# Get image
+img_path <- "/home/kari/Dropbox/PollenUCR/07_Fotos/"
+img <- readPNG(paste0(img_path,"SanGerardo.png"))
+g <- rasterGrob(img, interpolate=TRUE, width = unit(3,"in"), height=unit(3,"in"))
+img_p <- ggdraw() + draw_image(img)
+
+
+png(paste0(outputDir, "/Figures/Figure1.png"), width = 3000, height = 2800, res = 300) 
+
+pushViewport(viewport(layout  =  grid.layout(26, 12)))
+vplayout <- function(x, y) viewport(layout.pos.row  =  x, layout.pos.col  =  y)
+
+print(img_p + theme(plot.title = element_text(size = 20, hjust=0.01, vjust = -3.0, face = "bold",family="Helvetica"))+ggtitle("a."), vp = vplayout(1:9, 1:6))
+
+print(venn_visitors + theme(legend.position = "none", plot.title = element_text(size = 20, hjust=0.01, vjust = -3.0, face = "bold",family="Helvetica"))+ggtitle("b."), vp = vplayout(1:10, 7:12))
+
+legend = gtable_filter(ggplotGrob(venn_visitors), "guide-box")
+legend$vp = viewport(layout.pos.row = 9, layout.pos.col = 11:12)
+grid.draw(legend)
+
+print(alpha_visitors_p + theme(plot.title = element_text(size = 20,hjust=0.01, vjust = -3, face = "bold",family="Helvetica")) + ggtitle("c."), vp = vplayout(10:18,1:12))
+
+print(alpha_fruitcrops_p + theme(plot.title = element_text(size = 20,hjust=0.01, vjust = -3, face = "bold",family="Helvetica")) + ggtitle("d."), vp = vplayout(18:26,1:12))
+dev.off()
+
+```
+
+
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```

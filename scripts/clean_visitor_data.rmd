@@ -1,0 +1,444 @@
+---
+title: 'Clean insect visitors dataset'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+### LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+
+# diversity 
+#install.packages("iNEXT")
+library("iNEXT")
+library(hilldiv)
+
+# rmd
+library(details)
+library(knitr)
+library(kableExtra)
+```
+
+### WORKING DIRECTORIES
+
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+
+```
+
+### LOAD DATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+bichos <- read.csv(paste0(dataDir, "/Base_unificada.csv"))
+
+#remove messy columns
+bichos <- bichos[, -c(35:45)] 
+
+# Figure out sampling unit
+bichos$Proj_site <- paste(bichos$Project, bichos$Fruitcrop_transect, sep = "_")
+
+bichos$Sampling_unit <- paste(bichos$Project, bichos$Sampling_session, bichos$Fruitcrop_transect,  bichos$Month, sep = "_")
+
+bichos$Sampling_unit[1:3]
+
+check_sampling <- as.data.frame(table(bichos$Sampling_unit))
+names(check_sampling) <- c("Sampling_unit", "n_visitors") 
+
+n_plants_sampling <- bichos %>% 
+						group_by(Sampling_unit) %>% 
+						summarise(n_plants = n_distinct(Tree_code))
+						
+check_sampling <- left_join(check_sampling, n_plants_sampling, by = "Sampling_unit")
+
+head(check_sampling)
+
+bichos$Proj_season <- paste(bichos$Project, bichos$Season, sep = "_")
+
+(sample_size_project <- bichos %>%
+ 							group_by(Project) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+
+(sample_size_fruitcrop <- bichos %>%
+ 							group_by(Fruitcrop_transect) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+
+(sample_size_sampling <- bichos %>%
+ 							group_by(Proj_site) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+sum(sample_size_sampling$n_sampling)
+
+(sample_size_farm <- bichos %>%
+ 							group_by(Proj_site, Farm_transect) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+
+(sample_size_crop <- bichos %>%
+							filter(Project == "Cultivos") %>%
+ 							group_by(Plant_species) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+
+(sample_size_proj_season <- bichos %>%
+ 							group_by(Proj_season) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit))) 
+
+
+# add rownames to dataframe
+rownames(bichos) <- bichos$ID_code_unique
+
+# check data
+nrow(bichos)
+
+table(bichos$Project)
+table(bichos$Fruitcrop_transect)
+table(bichos$Collected_or_sighting)
+table(bichos$Project, bichos$Collected_or_sighting)
+
+giras <- read.csv(paste0(dataDir, "/Datos_giras.csv"))
+
+# Figure out sampling unit
+giras$Proj_site <- paste(giras$Project, giras$Fruitcrop_transect, sep = "_")
+
+giras$Sampling_unit <- paste(giras$Project, giras$Sampling_session, giras$Fruitcrop_transect, giras$Day, giras$Month, sep = "_")
+
+(summary_farms <- giras %>% group_by(Farm_transect, Fruitcrop_transect, ) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit)) %>% data.frame) 
+
+(summary_giras <- giras %>% filter(Project == "Cultivos") %>%
+ 							group_by(Month_num, Plant_species) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit)) %>% data.frame)
+
+days_per_sampling <- giras %>% 
+ 							group_by(Project, Sampling_session) %>% 
+ 							summarise(days_per_sampling = n_distinct(Day)) %>% data.frame  
+(total_hours_project <- giras %>% 
+					group_by(Project, Sampling_unit) %>%
+					summarise(hours_per_sampling = min(Sampling_hours)) %>%
+					group_by(Project)%>%
+					summarise(total_hours = sum(hours_per_sampling)) %>%	data.frame
+)
+
+(total_hours_plant_transect <- giras %>% 
+					group_by(Fruitcrop_transect, Sampling_unit) %>%
+					summarise(hours_per_sampling = min(Sampling_hours)) %>%
+					group_by(Fruitcrop_transect)%>%
+					summarise(total_hours = sum(hours_per_sampling)) %>%	
+					 data.frame
+)
+
+giras_to_merge <- giras %>% 
+ 							group_by(Project, Sampling_session, Fruitcrop_transect, Day) %>%
+ 							summarise(giras_to_merge = n_distinct(paste(Sampling_session, Day))) %>% data.frame  
+
+giras_subset <- giras %>% select(Project, Sampling_session, Day, Fruitcrop_transect, Sampling_hours) %>% distinct()
+
+giras_to_merge <- right_join(giras_to_merge, giras_subset, by = c("Project" , "Sampling_session", "Fruitcrop_transect", "Day" ))
+str(giras_to_merge)
+
+```
+
+### CLEAN TAXONOMY
+
+```{r exploreTax, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+tax <- bichos %>% select(Order, Family, Genus, Species, Lowest_assignment) 
+
+tax[is.na(tax)] <- "NA"
+str(tax)
+
+table(tax$Order)
+
+# num Families minus 1 (NA)
+nrow(data.frame(table(tax$Family))) -1
+
+# num Genera minus 1 (NA)
+nrow(data.frame(table(tax$Genus))) -1
+
+# Explore unsassigned 
+family_na <- tax %>% filter(Family == "NA") 
+
+# num of specimens unassigned to Family level
+nrow(family_na)
+
+table(family_na$Order)
+
+```
+
+Remove individuals that did not get assigned to Family level and hummingbirds.
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+tax_filter <- tax %>% filter(Family != "NA" & Order != "Apodiformes") 
+str(tax_filter)
+
+tax_filter %>%
+		summarise(n_Order = n_distinct(Order), 
+				n_Family = n_distinct(Family), 
+				n_Genus = n_distinct(Genus), 
+				n_Lowest = n_distinct(Lowest_assignment), 
+				n_species = n_distinct(Species)) 
+
+```
+
+Explore unassigned Genera
+
+```{r exploreGenus, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# num of individuals unassigned to Genus level
+
+genus_na <- tax %>% filter(Family != "NA", Genus == "NA") 
+nrow(genus_na)
+
+# Perc of individuals unnasigned to Genus
+(799/4112)*100
+
+count_genus_na <- as.data.frame(table(genus_na$Family))
+count_genus_na$Perc_na <- (count_genus_na$Freq/799)*100
+count_genus_na$Perc_total <- (count_genus_na$Freq/4112)*100
+
+head(count_genus_na)
+
+(top_unassigned <- count_genus_na %>% filter(Perc_na > 3))
+
+sum(top_unassigned$Perc_total)
+
+```
+
+Explore unassigned Lowest assignment (Species / Morphospecies)
+
+
+```{r exploreSp, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# num of specimens unassigned to Genus level
+lowest_na <- tax %>% filter(Family != "NA", Lowest_assignment == "NA") 
+nrow(lowest_na)
+
+# Perc of specimens unnasigned to Genus
+(1064/4112)*100
+
+count_lowest_na <- as.data.frame(table(lowest_na$Genus))
+count_lowest_na$Perc_na <- (count_lowest_na$Freq/1064)*100
+count_lowest_na$Perc_total <- (count_lowest_na$Freq/4112)*100
+
+head(count_lowest_na, 3)
+
+(top_unassigned <- count_lowest_na %>% filter(Perc_na > 10))
+
+sum(top_unassigned$Perc_total)
+
+
+
+```
+
+Replace NA with highest taxonomic assinment
+
+```{r cleanTax, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+for (i in 1:nrow(tax_filter)){
+    if (tax_filter[i,2] == "NA"){
+    order <- paste("Order_", tax_filter[i,1], sep = "")
+    tax_filter[i, 2:4] <- order
+    } else if (tax_filter[i,3] == "NA"){
+   family <- paste("Family_", tax_filter[i,2], sep = "")
+    tax_filter[i, 3:4] <- family
+    } else if ((tax_filter[i,4] == "NA")){
+    tax_filter$Lowest_assignment[i] <- paste("Genus_", tax_filter[i,2], sep = "")
+} else if (tax_filter[i,4] == "NA"){
+}
+}
+
+head(tax_filter, 3)
+tail(tax_filter, 3)
+
+# merge with df
+bichos_long <- bichos %>% select(Project, Sampling_session, Sampling_unit, Day, Month, Year, Season, Proj_site, Proj_season, Farm_transect, Fruitcrop_transect, Plant_species)
+
+head(rownames(bichos_long))
+head(rownames(tax_filter))
+
+bichos_long <- merge(bichos_long, tax_filter, by = 0, all.x = FALSE) 
+names(bichos_long)
+
+sampling_lowest <- bichos_long %>% 
+					group_by(Sampling_unit) %>%
+					summarise(count_lowest = n_distinct(Lowest_assignment)) %>%
+					data.frame
+
+head(sampling_lowest)
+head(check_sampling)
+check_sampling$Sampling_unit <- as.character(check_sampling$Sampling_unit)
+
+check_sampling_df <- left_join(sampling_lowest, check_sampling, by = "Sampling_unit")
+check_sampling_df <- check_sampling_df[order(check_sampling_df$n_plants, check_sampling_df$n_visitors),]
+head(check_sampling_df, 12)
+
+#write.csv(check_sampling_df, paste0(dataDir, "/check_sampling_df.csv"))
+
+```
+
+### MERGE AND FILTER
+
+Merge insect data with sampling session info.
+
+```{r merge, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# add counts to df
+bichos_long <- left_join(bichos_long, check_sampling_df, by = "Sampling_unit")
+
+# add sampling hours to df
+bichos_long <- left_join(bichos_long, giras_to_merge, by = c("Project", "Sampling_session", "Day", "Fruitcrop_transect" ), keep = FALSE)
+
+Sampling_hours_total <- bichos_long %>% 
+				group_by(Project, Sampling_unit) %>%
+				distinct(Sampling_hours) %>%
+				arrange(Sampling_unit) %>%
+				mutate(Sampling_hours_total = sum(Sampling_hours)) %>%
+				select(-Sampling_hours) %>% 
+				distinct(Sampling_unit, Sampling_hours_total) %>%
+				data.frame
+
+
+bichos_long <- right_join(bichos_long, Sampling_hours_total, by = c("Sampling_unit", "Project"))
+
+check_sampling_df_2 <- bichos_long %>%
+					distinct(Sampling_unit, count_lowest, n_visitors, n_plants, Sampling_hours_total) %>% arrange(Sampling_hours_total)
+head(check_sampling_df_2, 15)
+
+write.csv(check_sampling_df_2, paste0(dataDir, "/check_sampling_fadf.csv"))
+
+```
+
+Remove sampling sessions with very low sampling effort (< 2hours)
+
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# n sampling units before filtering 
+bichos_long %>% group_by(Fruitcrop_transect) %>%
+					summarise(n_distinct(Sampling_unit))
+
+# remove sampling units with very low sampling effort
+bichos_long_filter <- bichos_long %>% filter(Sampling_hours_total  >= 2 )
+
+# n sampling units after filtering
+bichos_long_filter %>% group_by(Fruitcrop_transect) %>%
+						summarise( n_distinct(Sampling_unit))
+bichos_long_filter %>% group_by(Project) %>%
+						summarise( n_distinct(Sampling_unit))						
+
+(total_hours_project <- bichos_long_filter %>% 
+					group_by(Project, Sampling_unit)%>%
+					distinct(Sampling_hours_total) %>%
+					group_by(Project) %>%
+					summarise(total_hours = sum(Sampling_hours_total)) %>%	data.frame
+)
+136.65 + 97.25
+
+```
+
+Supplementary Tables
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+y <- c("Persea americana","Rubus","Malus domestica","Prunus domestica", "Suria", "Tajo")
+
+oldnames <- c("August", "July", "September", "December", "June", "November", "October", "January", "February", "May",  "April", "March")
+newnames <- c("Aug", "Jul", "Sep", "Dec", "Jun", "Nov", "Oct", "Jan", "Feb", "May",  "Apr", "Mar")
+
+
+(sample_size_month <- bichos_long_filter %>% 
+							group_by(Year, Fruitcrop_transect, Month) %>% 
+ 							summarise(n_sampling = n_distinct(Sampling_unit)) %>% 
+ 							pivot_wider(names_from = Month, values_from = n_sampling, values_fill = 0) %>%
+ 							arrange(match(Fruitcrop_transect, y)) %>%
+ 							data.frame %>% 
+ 							rename_at(all_of(oldnames), ~ newnames) %>%
+ 							select(Year, Fruitcrop_transect, Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec ))
+
+silvestres_info <- read.csv(paste0(dataDir, "/silvestres_info.csv"))
+head(silvestres_info)
+
+bichos_long_filter <- left_join(bichos_long_filter, silvestres_info, by = "Plant_species")
+names(bichos_long_filter )
+
+flowering_transects <- bichos_long_filter %>%
+							filter(Project == "Silvestres") %>%
+							group_by(Plant_Family, Plant_species, Month) %>%
+							summarise(n_sampling = n_distinct(Sampling_unit)) %>% 			
+							pivot_wider(names_from = Month, values_from = n_sampling, values_fill = 0) %>%
+							data.frame %>% 
+ 							rename_at(all_of(oldnames), ~ newnames) %>%
+ 							select(Plant_Family, Plant_species, Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)
+flowering_transects <- left_join(flowering_transects, silvestres_info, by = c("Plant_Family", "Plant_species"))
+
+write.csv(flowering_transects, paste0(dataDir, "/flowering_transects.csv"), row.names = FALSE)
+
+names(bichos_long_filter)
+table(bichos_long_filter$Order)
+
+tax_summary <- bichos_long_filter %>%
+							group_by(Order, Family, Genus, Lowest_assignment) %>%
+							mutate(
+								Genus = ifelse(str_starts(Genus, "Family_"), NA, Genus),
+								Lowest_assignment = ifelse(str_starts(Lowest_assignment, "Family_"), NA, Lowest_assignment)) %>% 
+							group_by(Order, Family, Genus) %>%
+							summarise(
+								count_lowest = n_distinct(Lowest_assignment, na.rm = TRUE), 
+								abundance = n()) %>%
+							data.frame
+
+table(tax_summary$Order)
+
+tax_summary_coleoptera <- tax_summary %>% 
+							filter(Order == "Coleoptera")
+
+tax_summary_diptera <- tax_summary %>% 
+							filter(Order == "Diptera")
+
+tax_summary_hemiptera <- tax_summary %>% 
+							filter(Order == "Hemiptera")
+
+tax_summary_hymenoptera <- tax_summary %>% 
+							filter(Order == "Hymenoptera")
+
+tax_summary_lepidoptera <- tax_summary %>% 
+							filter(Order == "Lepidoptera")
+
+write.csv(tax_summary_coleoptera, paste0(outputDir, "/list_coleoptera.csv"), row.names = FALSE)
+write.csv(tax_summary_diptera, paste0(outputDir, "/list_diptera.csv"), row.names = FALSE)
+write.csv(tax_summary_hemiptera, paste0(outputDir, "/list_hemiptera.csv"), row.names = FALSE)
+write.csv(tax_summary_hymenoptera, paste0(outputDir, "/list_hymenoptera.csv"), row.names = FALSE)
+write.csv(tax_summary_lepidoptera, paste0(outputDir, "/list_lepidoptera.csv"), row.names = FALSE)
+
+```
+
+
+### OUTPUT FILES
+
+Save clean data files for diversity analyses
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+write.csv(bichos_long, paste0(dataDir,"/bichos_long.csv"))
+write.csv(bichos_long_filter, paste0(dataDir,"/bichos_long_filter.csv"))
+
+```
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```

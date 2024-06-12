@@ -1,0 +1,737 @@
+---
+title: 'Beta diversity of insect visitors'
+author: "B. Karina Montero "
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+### LOAD LIBRARIES
+
+```{r libraries, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+rm(list = ls())
+
+# basics
+library(tidyverse)
+library(stringr)
+library(vegan)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+
+# diversity 
+library(iNEXT)
+library(hilldiv)
+
+# rmd
+library(details)
+library(knitr)
+library(kableExtra)
+
+```
+
+### WORKING DIRECTORIES
+
+```{r source, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results="hide"}
+
+source("/home/kari/Dropbox/PollenUCR/01_scripts/UCR_workingDirectories.R")
+
+```
+
+### LOAD DATA
+
+```{r metadata, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, results = "hide"}
+
+bichos_long_filter <- read.csv(paste0(dataDir, "/bichos_long_filter.csv"))
+
+```
+
+### GRAPHICAL PARAMETERS
+```{r graphParams, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+ord_theme <- theme_set(theme_bw(base_size = 13)) + theme( panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), panel.border=element_rect(fill = NA, colour = "black"),plot.margin=grid::unit(c(5,5,5,5), "mm"), axis.text.x = element_text(colour = "black", size=rel(1)), axis.text.y=element_text(size=rel(1), colour="black"), axis.title = element_text(size = rel(1)))
+
+season_order <- c("dry", "rainy")
+
+season_col <- c("#FFC107", "#004D40")
+
+season_color <- scale_color_manual(name = "Season",
+                                   values = season_col,
+                                   limits = season_order,
+                                   labels = c("Dry", "Wet")
+                                   #guide = "right"
+                                   )
+season_fill <- scale_fill_manual(name = "Season",
+                                   values = season_col,
+                                   limits = season_order,
+                                   labels = c("Dry", "Wet")
+                                   #guide = "none"
+                                   )
+
+project_order <- c("Cultivos", "Silvestres")
+
+project_symbol <- c(21, 22)
+
+project_line <- c(1, 2)
+
+project_shape <- scale_shape_manual(name = "Sampling",
+                                   values = project_symbol,
+                                   limits = project_order,
+                                   labels = c("Fruit crops", "Wild plants")
+                                   #guide = "right"
+                                   )
+
+
+project_line <- scale_linetype_manual(name = "",
+                                   values = project_line,
+                                   limits = project_order,
+                                   labels = c("Fruit crops", "Wild plants"),
+                                   guide = "none"
+                                   )
+
+
+proj_season_order <- c("Cultivos_dry", "Cultivos_rainy", "Silvestres_dry", "Silvestres_rainy") 
+
+proj_season_col <- c("#FFC107",  "#004D40", "#FFC107", "#004D40")
+
+proj_season_symbol <- c(15, 16, 17, 18)
+
+proj_season_shape <- scale_shape_manual(name = "Sampling",
+                                   values = proj_season_symbol,
+                                   limits = proj_season_order,
+                                   labels = c("Fruit crops / Dry", "Fruit crops / Wet", "Wild plants / Dry", "Wild plants / Wet")
+                                   )
+
+proj_season_color <- scale_color_manual(name = "Season",
+                                   values = proj_season_col,
+                                   limits = proj_season_order,
+                                   labels = c("Fruit crops / Dry", "Fruit crops / Wet", "Wild plants / Dry", "Wild plants / Wet")
+                                   #guide = "right"
+                                   )
+
+proj_season_fill <- scale_fill_manual(name = "Season",
+                                   values = proj_season_col,
+                                   limits = proj_season_order,
+                                   labels = c("Fruit crops / Dry", "Fruit crops / Wet", "Wild plants / Dry", "Wild plants / Wet")
+                                   #guide = "none"
+                                   )
+
+
+crop_transect_order <- c( "Malus domestica", "Persea americana","Prunus domestica","Rubus", "Suria", "Tajo")
+
+crop_transect_col <- c("#D55E00", "#009E73", "#F0E442", "#0072B2", "Black", "Grey60")
+
+
+crop_transect_color <- scale_color_manual(name = "Fruit crop / Transect",
+                                   values = crop_transect_col,
+                                   limits = crop_transect_order,
+                                   labels = c( "Malus domestica", "Persea americana","Prunus domestica","Rubus sp.", "Wild plants (Suria)", "Wild plants (Tajo)")
+                                   #guide = "right"
+                                   )
+crop_transect_fill <- scale_fill_manual(name = "Fruitcrop",
+                                   values = crop_transect_col,
+                                   limits = crop_transect_order,
+                                   guide = "none"
+                                   )
+
+
+```
+
+# BETA DIVERSITY
+
+Pairwise distance based on Hill numbers
+
+The Sørensen‐type overlap (CqN for diversity) quantifies the effective average proportion of a subsystem (sampling unit) visitors that is shared across all sampling units. This is thus a metric that quantifies overlap from the subsystem (sampling units') perspective. 
+
+The Jaccard‐type overlap (UqN) quantifies the effective proportion of visitors in a system (crop/transect) that are shared across all subsystem (sampling units). Hence, this metric quantifies overlap from the perspective of the overall system (crop/transect). 
+
+The Sørensen‐type turnover‐complement (VqN) is the complement of the Sørensen‐type turnover, which quantifies the normalized visitor turnover rate with respect to the average subsystem (i.e., alpha), thus provides the proportion of a typical subsystem (sampling unit) that changes across subsystems.
+
+The Jaccard‐type turnover‐complement (SqN) is the complement of the Jaccard‐type turnover, which quantifies the normalized visitor turnover rate with respect to the whole system (i.e. gamma).
+
+Its corresponding dissimilarity eg. (1 − UqN) quantifies the effective proportion of nonshared visitors in the overall system.
+
+Modified from: A guide to the application of Hill numbers to DNA‐based diversity analyses, Alberdi &Gilbert 2019 Mol Ecol Res
+
+## Dissimilarity matrix project / season
+
+Prepare data 
+
+```{r pairwiseDistData, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+table(bichos_long_filter$Proj_season, bichos_long_filter$Fruitcrop_transect)
+
+# hierarchy
+bichos_hier_df <- bichos_long_filter %>% 
+				group_by(Sampling_unit, Proj_season, Project, Season) %>%
+				dplyr::slice(1) %>% 
+				select(Sampling_unit, Proj_season, Project, Season) %>%
+				data.frame %>% 
+				mutate(Sampling_unit = gsub("\\ ", ".", Sampling_unit),
+					   Proj_season = gsub("\\ ", ".", Proj_season))
+
+bichos_hier <- bichos_long_filter %>% 
+				group_by(Sampling_unit, Proj_season) %>%
+				dplyr::slice(1) %>% 
+				select(Sampling_unit, Proj_season) %>%
+				data.frame %>% 
+				mutate(Sampling_unit = gsub("\\ ", ".", Sampling_unit),
+					   Proj_season = gsub("\\ ", ".", Proj_season))
+head(bichos_hier)
+
+# format into a integer matrix
+bichos_sampling <- bichos_long_filter %>% 
+				group_by(Sampling_unit,  Lowest_assignment) %>%
+				summarise(n_Lowest = n()) %>% data.frame
+
+bichos_sampling$group <- paste(bichos_sampling$Proj_season, bichos_sampling$Sampling_unit, sep = ".")
+head(bichos_sampling)
+
+# Incidence matrix 
+
+bichos_sampling <- bichos_long_filter %>%
+				group_by(Sampling_unit,  Lowest_assignment) %>%
+				summarise(n_Lowest = n()) %>% 
+				mutate(n_Lowest = as.integer(ifelse(n_Lowest > 0, 1, 0))) 
+
+# matrix
+incidence_sampling <- bichos_sampling %>% 
+			spread(Sampling_unit, n_Lowest, fill = 0) %>% data.frame
+
+rownames(incidence_sampling) <- incidence_sampling[,1]
+
+incidence_sampling <- incidence_sampling %>% select(-Lowest_assignment)
+
+```
+
+### Distance matrix (incidence data)
+
+```{r distIncid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+head(bichos_hier)
+dist_q0 <- pair_dis(incidence_sampling, qvalue = 0)
+dist_q1 <- pair_dis(incidence_sampling, qvalue = 1)
+dist_q2 <- pair_dis(incidence_sampling, qvalue = 2)
+
+sorensen_dist_q0 <- as.dist(dist_q0$L1_CqN)
+sorensen_dist_q1 <- as.dist(dist_q1$L1_CqN)
+sorensen_dist_q2 <- as.dist(dist_q2$L1_CqN)
+
+#write.csv(sorensen_dist_q0, paste0(dataDir, "/Sorensen_Hill_distance.csv"))
+
+```
+
+Test whether the the grouping factor (Cultivos_dry vs. Cultivos_rainy vs. Silvestres_dry vs. Silvestres_rainy) has a
+significant effect on overall insect visitor composition based on incidence data. 
+
+```{r permanovaProjectSeason, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+set.seed(10112023)
+incidence_permanova_q0 <- adonis2(t(sorensen_dist_q0) ~  Season + Project, data = bichos_hier_df, permutations=9999, na.rm = TRUE, by = "margin")
+
+incidence_permanova_q0
+
+incidence_permanova_q1 <- adonis2(t(sorensen_dist_q1) ~ Project + Season, data = bichos_hier_df, permutations=9999, na.rm = TRUE, by = "margin")
+incidence_permanova_q1
+
+incidence_permanova_q2 <- adonis2(t(sorensen_dist_q2) ~ Project + Season, data = bichos_hier_df, permutations=9999, na.rm = TRUE, by = "margin")
+incidence_permanova_q2
+
+# Calculate multivariate dispersions
+project_dispersion <- betadisper(t(sorensen_dist_q1) , bichos_hier_df$Project)
+season_dispersion <- betadisper(t(sorensen_dist_q1) , bichos_hier_df$Season)
+
+plot(project_dispersion)
+plot(season_dispersion)
+
+# test for differences in dispersion 
+anova(project_dispersion)
+anova(season_dispersion)
+     
+# Permutation test for F
+permutest(project_dispersion, pairwise = TRUE, permutations = 99)
+permutest(season_dispersion, pairwise = TRUE, permutations = 99)
+     
+## Tukey's Honest Significant Differences
+(proj_HSD <- TukeyHSD(project_dispersion))
+(season_HSD <- TukeyHSD(season_dispersion))
+
+
+```
+
+>Insect visitor community composition is similar between projects and between seasons. Also, dispersion is similar between projects and seasons, so the assumption of similar multivariate spread among groups is not violated and differences are not confounded by differences in dispersion. 
+>
+Perform a NMDS 
+
+```{r NMDSincid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# run NMDS q0
+set.seed(20102023)
+values_NMDS_q0 <- metaMDS(as.dist(sorensen_dist_q0), k = 4, trymax = 500)
+values_NMDS_q0$stress
+
+stressplot(values_NMDS_q0)
+
+# run NMDS q1
+set.seed(20102023)
+values_NMDS_q1 <- metaMDS(as.dist(sorensen_dist_q1), k = 4, trymax = 500)
+values_NMDS_q1$stress
+
+stressplot(values_NMDS_q1)
+
+# run NMDS q2
+set.seed(20102023)
+values_NMDS_q2 <- metaMDS(as.dist(sorensen_dist_q2), k = 4, trymax = 500)
+values_NMDS_q2$stress
+
+stressplot(values_NMDS_q2)
+
+```
+
+Get NMDS values for plot
+
+```{r scoresNMDSincid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+NMDS_scores_q0 <- data.frame(NMDS1 = values_NMDS_q0$point[, 1], NMDS2 = values_NMDS_q0$point[,2], NMDS3 = values_NMDS_q0$point[, 3], NMDS4 = values_NMDS_q0$point[, 4], Group = as.factor(bichos_hier[, 2]))
+NMDS_centroids_q0 = aggregate(NMDS_scores_q0[, c(1:2)], by = list(NMDS_scores_q0[, 
+            5]), FUN = mean)
+
+NMDS_scores_q0$Sample <- rownames(NMDS_scores_q0)
+
+colnames(NMDS_centroids_q0) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q0 <- merge(NMDS_scores_q0, NMDS_centroids_q0, by = "Group")
+
+NMDS_scores_q0 <- NMDS_scores_q0 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+
+NMDS_scores_q0$Group <- paste(NMDS_scores_q0$Project, NMDS_scores_q0$Season, sep = "_")
+
+NMDS_scores_q1 <- data.frame(NMDS1 = values_NMDS_q1$point[, 1], NMDS2 = values_NMDS_q1$point[,2], NMDS3 = values_NMDS_q1$point[, 3], NMDS4 = values_NMDS_q1$point[, 4], Group = as.factor(bichos_hier[, 2]))
+NMDS_centroids_q1 = aggregate(NMDS_scores_q1[, c(1:2)], by = list(NMDS_scores_q1[, 
+            5]), FUN = mean)
+
+NMDS_scores_q1$Sample <- rownames(NMDS_scores_q1)
+
+colnames(NMDS_centroids_q1) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q1 <- merge(NMDS_scores_q1, NMDS_centroids_q1, by = "Group")
+
+NMDS_scores_q1 <- NMDS_scores_q1 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+
+NMDS_scores_q1$Group <- paste(NMDS_scores_q1$Project, NMDS_scores_q1$Season, sep = "_")
+
+NMDS_scores_q2 <- data.frame(NMDS1 = values_NMDS_q2$point[, 1], NMDS2 = values_NMDS_q2$point[,2], NMDS3 = values_NMDS_q2$point[, 3], NMDS4 = values_NMDS_q2$point[, 4], Group = as.factor(bichos_hier[, 2]))
+
+NMDS_centroids_q2 = aggregate(NMDS_scores_q2[, c(1:2)], by = list(NMDS_scores_q2[, 
+            5]), FUN = mean)
+
+NMDS_scores_q2$Sample <- rownames(NMDS_scores_q2)
+
+colnames(NMDS_centroids_q2) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q2 <- merge(NMDS_scores_q2, NMDS_centroids_q2, by = "Group")
+
+NMDS_scores_q2 <- NMDS_scores_q2 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+NMDS_scores_q2$Group <- paste(NMDS_scores_q2$Project, NMDS_scores_q2$Season, sep = "_")
+
+```
+Plot NMDS
+
+```{r plotNMDSincid, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.width = 10, fig.height = 5}
+
+nmds_q0_proj_plot <- ggplot(NMDS_scores_q0, aes(x = NMDS1, y = NMDS2,colour = Season, fill = Season, shape = Project, linetype = Project)) + 
+				geom_point(size = 2) + 
+                season_color + 
+                season_fill +
+                project_shape +
+                project_line +
+        geom_point(data = NMDS_scores_q0, aes(x = x_cen, y = y_cen, fill = Season, shape = Project), colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+
+nmds_q1_proj_plot <- ggplot(NMDS_scores_q1, aes(x = NMDS1, y = NMDS2, colour = Season, fill = Season, shape = Project, linetype = Project)) + 
+				geom_point(size = 2) + 
+                season_color + 
+                season_fill +
+                project_shape +
+                project_line +
+        geom_point(data = NMDS_scores_q1, aes(x = x_cen, y = y_cen, fill = Season, shape = Project), colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+                
+nmds_q2_proj_plot <- ggplot(NMDS_scores_q2, aes(x = NMDS1, y = NMDS2, colour = Season, fill = Season, shape = Project, linetype = Project)) + 
+				geom_point(size = 2) + 
+                season_color + 
+                season_fill +
+                project_shape +
+                project_line +
+        geom_point(data = NMDS_scores_q2, aes(x = x_cen, y = y_cen, fill = Season, shape = Project), colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+
+
+# function for ellipsess 
+veganCovEllipse <- function (cov, center = c(0, 0), scale = 1, npoints = 100) 
+{
+  theta <- (0:npoints) * 2 * pi/npoints
+  Circle <- cbind(cos(theta), sin(theta))
+  t(center + scale * t(Circle %*% chol(cov)))
+}
+
+# ellipses for q0 plot 
+
+df_ell_q0 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q0$Group))){
+  df_ell_q0 <- rbind(df_ell_q0, cbind(as.data.frame(with(NMDS_scores_q0 [NMDS_scores_q0$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+
+df_ell_q0 <- df_ell_q0 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+df_ell_q0$Group <- paste(df_ell_q0$Project, df_ell_q0$Season, sep = "_")
+
+# data for labelling the ellipse
+NMDS_mean_q0 = aggregate(NMDS_scores_q0[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q0$Group), mean)
+
+NMDS_mean_q0 <- NMDS_mean_q0 %>% separate_wider_delim(group, "_", names = c("Project", "Season") )
+NMDS_mean_q0$Group <- paste(NMDS_mean_q0$Project, NMDS_mean_q0$Season, sep = "_")
+
+# ellipses for q1 plot 
+
+df_ell_q1 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q1$Group))){
+  df_ell_q1 <- rbind(df_ell_q1, cbind(as.data.frame(with(NMDS_scores_q1 [NMDS_scores_q1$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+
+
+df_ell_q1 <- df_ell_q1 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+df_ell_q1$Group <- paste(df_ell_q1$Project, df_ell_q1$Season, sep = "_")
+
+# data for labelling the ellipse
+NMDS_mean_q1 = aggregate(NMDS_scores_q1[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q1$Group), mean)
+
+NMDS_mean_q1 <- NMDS_mean_q1 %>% separate_wider_delim(group, "_", names = c("Project", "Season") )
+NMDS_mean_q1$Group <- paste(NMDS_mean_q1$Project, NMDS_mean_q1$Season, sep = "_")
+
+
+# ellipses for q2 plot 
+
+df_ell_q2 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q2$Group))){
+  df_ell_q2 <- rbind(df_ell_q2, cbind(as.data.frame(with(NMDS_scores_q2 [NMDS_scores_q2$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+
+df_ell_q2 <- df_ell_q2 %>% separate_wider_delim(Group, "_", names = c("Project", "Season") )
+df_ell_q2$Group <- paste(df_ell_q2$Project, df_ell_q2$Season, sep = "_")
+
+# data for labelling the ellipse
+NMDS_mean_q2 = aggregate(NMDS_scores_q2[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q2$Group), mean)
+
+NMDS_mean_q2 <- NMDS_mean_q2 %>% separate_wider_delim(group, "_", names = c("Project", "Season") )
+NMDS_mean_q2$Group <- paste(NMDS_mean_q2$Project, NMDS_mean_q2$Season, sep = "_")
+
+
+nmds_q0_proj_plot <- nmds_q0_proj_plot + geom_path(data = df_ell_q0, aes(x = NMDS1, y = NMDS2, group = Group))
+
+nmds_q1_proj_plot <- nmds_q1_proj_plot + geom_path(data = df_ell_q1, aes(x = NMDS1, y = NMDS2, group = Group))
+
+nmds_q2_proj_plot <- nmds_q2_proj_plot + geom_path(data = df_ell_q2, aes(x = NMDS1, y = NMDS2, group = Group))
+                
+NMDS_proj_season <- ggarrange(nmds_q0_proj_plot, nmds_q1_proj_plot, nmds_q2_proj_plot, nrow = 1, labels = c("a.", "b.", "c."), font.label = c(size = 16), common.legend = TRUE, legend = "bottom")
+
+png(paste0(outputDir, "/Figures/NMDS_proj_season.png"), width = 3000, height = 1500, res = 300) 
+NMDS_proj_season
+dev.off()
+```
+
+
+
+## Dissimilarity matrix fruitcrop_transect
+
+Prepare data 
+
+```{r pairwiseDistDataFruitcroptransect, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+str(bichos_long_filter)
+
+# hierarchy
+bichos_hier_df <- bichos_long_filter %>% 
+				group_by(Sampling_unit, Project, Season, Fruitcrop_transect) %>%
+				slice(1) %>% 
+				select(Sampling_unit, Fruitcrop_transect) %>%
+				data.frame %>% 
+				mutate(Sampling_unit = gsub("\\ ", ".", Sampling_unit),
+					   Fruitcrop_transect = gsub("\\ ", ".", Fruitcrop_transect))
+
+# Incidence matrix 
+
+bichos_sampling <- bichos_long_filter %>%
+				group_by(Sampling_unit,  Lowest_assignment) %>%
+				summarise(n_Lowest = n()) %>% 
+				mutate(n_Lowest = as.integer(ifelse(n_Lowest > 0, 1, 0))) 
+
+head(bichos_sampling)
+
+# matrix
+incidence_sampling <- bichos_sampling %>% 
+			spread(Sampling_unit, n_Lowest, fill = 0) %>% data.frame
+
+rownames(incidence_sampling) <- incidence_sampling[,1]
+
+incidence_sampling <- incidence_sampling %>% select(-Lowest_assignment)
+
+```
+
+### Distance matrix (incidence data)
+
+```{r distIncidFrTr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+dist_q0 <- pair_dis(incidence_sampling, qvalue = 0)
+dist_q1 <- pair_dis(incidence_sampling, qvalue = 1)
+dist_q2 <- pair_dis(incidence_sampling, qvalue = 2)
+
+sorensen_dist_q0 <- as.dist(dist_q0$L1_CqN)
+sorensen_dist_q1 <- as.dist(dist_q1$L1_CqN)
+sorensen_dist_q2 <- as.dist(dist_q2$L1_CqN)
+
+#write.csv(sorensen_dist, paste0(dataDir, "/Sorensen_Hill_distance.csv"))
+
+```
+
+Test whether the there is a difference in composition among fruitcrops has a significant effect on overall insect visitor composition based on incidence data. 
+
+```{r permanovaFrTr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+set.seed(24102023)
+
+incidence_permanova_q0 <- adonis2(t(sorensen_dist_q0) ~ Fruitcrop_transect, data = bichos_hier_df, permutations=9999, na.rm = TRUE)
+incidence_permanova_q0
+
+incidence_permanova_q1 <- adonis2(t(sorensen_dist_q1) ~ Fruitcrop_transect,
+               data = bichos_hier_df, permutations=9999, na.rm = TRUE)
+incidence_permanova_q1
+
+incidence_permanova_q2 <- adonis2(t(sorensen_dist_q2) ~ Fruitcrop_transect,
+               data = bichos_hier_df, permutations=9999, na.rm = TRUE)
+incidence_permanova_q2
+
+# Calculate multivariate dispersions
+fruittran_dispersion <- betadisper(t(sorensen_dist_q1) , bichos_hier_df$Fruitcrop_transect)
+
+plot(fruittran_dispersion)
+
+# test for differences in dispersion 
+
+anova(fruittran_dispersion)
+
+# Permutation test for F
+set.seed(231023)
+permutest(fruittran_dispersion, pairwise = TRUE, permutations = 99)
+     
+## Tukey's Honest Significant Differences
+fruittran_HSD <- TukeyHSD(fruittran_dispersion)
+plot(fruittran_HSD)
+
+```
+
+>Insect visitor community composition is significantly different between fruitcrops and transect grouping, and the effect is similar across Hill numbers estimates (R2 = 0.10). Dispersion is similar between groups, so the assumption of similar multivariate spread among groups is not violated and differences are not confounded by differences in dispersion. Given that there is an issue of nestedness, it is not possible to model the effect of project, season, and fruitcrop / transect together.  
+>
+Perform a NMDS 
+
+```{r NMDSincidFrTr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# run NMDS q0
+set.seed(20102023)
+values_NMDS_q0 <- metaMDS(as.dist(sorensen_dist_q0), k = 4, trymax = 500)
+values_NMDS_q0$stress
+
+stressplot(values_NMDS_q0)
+
+# run NMDS q1
+set.seed(20102023)
+values_NMDS_q1 <- metaMDS(as.dist(sorensen_dist_q1), k = 4, trymax = 500)
+values_NMDS_q1$stress
+
+stressplot(values_NMDS_q1)
+
+# run NMDS q2
+set.seed(20102023)
+values_NMDS_q2 <- metaMDS(as.dist(sorensen_dist_q2), k = 4, trymax = 500)
+values_NMDS_q2$stress
+
+stressplot(values_NMDS_q2)
+
+```
+
+NMDS values for plot
+
+```{r scoresNMDSincidFrTr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+NMDS_scores_q0 <- data.frame(NMDS1 = values_NMDS_q0$point[, 1], NMDS2 = values_NMDS_q0$point[,2], NMDS3 = values_NMDS_q0$point[, 3], NMDS4 = values_NMDS_q0$point[, 4], Group = as.factor(bichos_hier_df[, 4]))
+
+NMDS_scores_q0 <- NMDS_scores_q0 %>% mutate(Group = gsub("\\.", " ", Group))
+
+
+NMDS_centroids_q0 = aggregate(NMDS_scores_q0[, c(1:2)], by = list(NMDS_scores_q0[, 
+            5]), FUN = mean)
+
+NMDS_scores_q0$Sample <- rownames(NMDS_scores_q0)
+
+colnames(NMDS_centroids_q0) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q0 <- merge(NMDS_scores_q0, NMDS_centroids_q0, by = "Group")
+
+
+NMDS_scores_q1 <- data.frame(NMDS1 = values_NMDS_q1$point[, 1], NMDS2 = values_NMDS_q1$point[,2], NMDS3 = values_NMDS_q1$point[, 3], NMDS4 = values_NMDS_q1$point[, 4], Group = as.factor(bichos_hier_df[, 4]))
+
+NMDS_scores_q1 <- NMDS_scores_q1 %>% mutate(Group = gsub("\\.", " ", Group)) 
+
+NMDS_centroids_q1 = aggregate(NMDS_scores_q1[, c(1:2)], by = list(NMDS_scores_q1[, 
+            5]), FUN = mean)
+
+NMDS_scores_q1$Sample <- rownames(NMDS_scores_q1)
+
+colnames(NMDS_centroids_q1) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q1 <- merge(NMDS_scores_q1, NMDS_centroids_q1, by = "Group")
+
+NMDS_scores_q2 <- data.frame(NMDS1 = values_NMDS_q2$point[, 1], NMDS2 = values_NMDS_q2$point[,2], NMDS3 = values_NMDS_q2$point[, 3], NMDS4 = values_NMDS_q2$point[, 4], Group = as.factor(bichos_hier_df[, 4]))
+
+NMDS_scores_q2 <- NMDS_scores_q2 %>% mutate(Group = gsub("\\.", " ", Group)) 
+
+NMDS_centroids_q2 = aggregate(NMDS_scores_q2[, c(1:2)], by = list(NMDS_scores_q2[, 
+            5]), FUN = mean)
+
+
+NMDS_scores_q2$Sample <- rownames(NMDS_scores_q2)
+
+colnames(NMDS_centroids_q2) <- c("Group", "x_cen", "y_cen")
+
+NMDS_scores_q2 <- merge(NMDS_scores_q2, NMDS_centroids_q2, by = "Group")
+
+
+```
+Plot NMDS results using incidence data
+
+```{r plotNMDSincidFrtr, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE, fig.width = 10, fig.height = 5}
+
+head(NMDS_scores_q0)
+
+nmds_q0_fruitcrop_plot <- ggplot(NMDS_scores_q0, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+				geom_point(size = 2) + 
+         				crop_transect_color + 
+                crop_transect_fill +
+        geom_point(data = NMDS_scores_q0, aes(x = x_cen, y = y_cen, fill = Group), shape = 21,  colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+
+nmds_q1_fruitcrop_plot <- ggplot(NMDS_scores_q1, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+				geom_point(size = 2) + 
+         				crop_transect_color + 
+                crop_transect_fill +
+        geom_point(data = NMDS_scores_q1, aes(x = x_cen, y = y_cen, fill = Group), shape = 21,  colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+
+nmds_q2_fruitcrop_plot <- ggplot(NMDS_scores_q2, aes(x = NMDS1, y = NMDS2, colour = Group, fill = Group)) + 
+				geom_point(size = 2) + 
+         				crop_transect_color + 
+                crop_transect_fill +
+        geom_point(data = NMDS_scores_q2, aes(x = x_cen, y = y_cen, fill = Group), shape = 21,  colour = "black", size = 5, show.legend = FALSE) +
+        ord_theme + theme(legend.text = element_text(face = "italic", size = 10), legend.title = element_text(size = 12))
+
+
+# ellipses for q0 plot 
+NMDS_scores_q0_noPrune <- NMDS_scores_q0 %>% filter(Group != "Prunus domestica")
+
+#data for ellipse, in this case using the management factor
+df_ell_q0 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q0_noPrune$Group))){
+  df_ell_q0 <- rbind(df_ell_q0, cbind(as.data.frame(with(NMDS_scores_q0_noPrune [NMDS_scores_q0_noPrune$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+ 
+# data for labelling the ellipse
+NMDS_mean_q0 = aggregate(NMDS_scores_q0_noPrune[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q0_noPrune$Group), mean)
+ 
+
+# ellipses for q1 plot 
+NMDS_scores_q1_noPrune <- NMDS_scores_q1 %>% filter(Group != "Prunus domestica")
+
+#data for ellipse, in this case using the management factor
+df_ell_q1 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q1_noPrune$Group))){
+  df_ell_q1 <- rbind(df_ell_q1, cbind(as.data.frame(with(NMDS_scores_q1_noPrune [NMDS_scores_q1_noPrune$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+ 
+# data for labelling the ellipse
+NMDS_mean_q1 = aggregate(NMDS_scores_q1_noPrune[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q1_noPrune$Group), mean)
+
+
+# ellipses for q2 plot 
+NMDS_scores_q2_noPrune <- NMDS_scores_q2 %>% filter(Group != "Prunus domestica")
+
+#data for ellipse, in this case using the management factor
+df_ell_q2 <- data.frame() #sets up a data frame before running the function.
+for(g in levels(as.factor(NMDS_scores_q2_noPrune$Group))){
+  df_ell_q2 <- rbind(df_ell_q2, cbind(as.data.frame(with(NMDS_scores_q2_noPrune [NMDS_scores_q2_noPrune$Group==g,],
+ veganCovEllipse(cov.wt(cbind(NMDS1,NMDS2),wt=rep(1/length(NMDS1),length(NMDS1)))$cov,center=c(mean(NMDS1),mean(NMDS2))))) ,Group=g))
+}
+ 
+# data for labelling the ellipse
+NMDS_mean_q2 = aggregate(NMDS_scores_q2_noPrune[ ,c("NMDS1", "NMDS2")], 
+                         list(group = NMDS_scores_q2_noPrune$Group), mean)
+ 
+nmds_q0_fruitcrop_plot <- nmds_q0_fruitcrop_plot + geom_path(data = df_ell_q0, aes(x = NMDS1, y = NMDS2, group = Group))
+
+nmds_q1_fruitcrop_plot <- nmds_q1_fruitcrop_plot + geom_path(data = df_ell_q1, aes(x = NMDS1, y = NMDS2, group = Group))
+
+nmds_q2_fruitcrop_plot <- nmds_q2_fruitcrop_plot + geom_path(data = df_ell_q2, aes(x = NMDS1, y = NMDS2, group = Group))
+
+nmds_fruitcrop_plot <- ggarrange(nmds_q0_fruitcrop_plot, nmds_q1_fruitcrop_plot, nmds_q2_fruitcrop_plot, nrow = 1, labels = c("a.", "b.", "c."), font.label = c(size = 16), common.legend = TRUE, legend = "bottom")
+
+
+png(paste0(outputDir, "/Figures/NMDS_fruitcrop_transect.png"), width = 3000, height = 1500, res = 300) 
+nmds_fruitcrop_plot
+dev.off()
+
+```
+
+Combine NMDS plots 
+
+```{r, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+NMDS_combined <- ggarrange(nmds_q1_proj_plot, nmds_q1_fruitcrop_plot, nrow = 1, labels = c("a.", "b."), font.label = list(size = 20, face = "bold", family="Helvetica", size = 16), common.legend = FALSE, legend = "right")
+
+
+png(paste0(outputDir, "/Figures/Figure2.png"), width = 3000, height = 1200, res = 300) 
+NMDS_combined
+dev.off()
+
+
+```
+```
+
+# notes
+
+```{r notes, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+
+# to get the polygons for a grouping factor
+#Group_Tajo <- NMDS_scores[NMDS_scores$Group == "Tajo", ][chull(NMDS_scores[NMDS_scores$Group == "Tajo", c("NMDS1", "NMDS2")]),]
+
+#bind hull data into object to add polygons to ggplot
+
+#geom_polygon(data = hull_data, aes(x = NMDS1, y = NMDS2), alpha = 0.5) +
+```
+
+## Session Info
+
+```{r sessionInfo, message=FALSE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45), paged.print=FALSE}
+sessioninfo::session_info()%>%
+  details::details(summary = 'Current session info', open = FALSE)
+```
+
+
+
