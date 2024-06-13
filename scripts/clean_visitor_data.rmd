@@ -2,7 +2,7 @@
 title: 'Clean insect visitors dataset'
 author: "B. Karina Montero "
 date: "`r Sys.Date()`"
-output: html_document
+output: rmarkdown::github_document
 ---
 
 
